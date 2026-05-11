@@ -1,0 +1,192 @@
+﻿================================================================
+  RhinoAIBridge v4.5 — Installation Guide
+  by tanishqb | https://github.com/tanishqb/rhino-mcp
+================================================================
+
+WHAT YOU NEED
+-------------
+  - Rhino 8 (any version)
+  - Claude Desktop, OR an OpenAI/Anthropic API key, OR Ollama
+  - Windows 10 or 11
+  - Internet connection (first run only, to install Python deps)
+
+You do NOT need:
+  - .NET SDK
+  - Visual Studio
+  - Any manual config editing
+
+
+================================================================
+  STEP 1 — Extract the zip
+================================================================
+
+Unzip RhinoAIBridge-v4.5.zip to any folder.
+Example: C:\RhinoAIBridge\
+
+
+================================================================
+  STEP 2 — Run the installer
+================================================================
+
+Double-click INSTALL.bat
+
+It will automatically:
+  [1] Copy the pre-built plugin files to Rhino's plugin folder
+  [2] Install uv (Python package manager) if not already present
+  [3] Install the MCP server's Python dependencies
+  [4] Patch Claude Desktop's config (if Claude Desktop is installed)
+
+Follow any on-screen prompts. The whole process takes 1-2 minutes.
+
+
+================================================================
+  STEP 3 — Register the plugin in Rhino (first time only)
+================================================================
+
+1. Open Rhino 8
+2. In the Rhino command line, type:  PluginManager
+3. Click "Install..."
+4. Navigate to:
+   %APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\RhinoAIBridge\
+   Select: RhinoAIBridge.rhp
+5. Click Open
+
+You only do this ONCE. After the first install, the plugin
+loads automatically every time you open Rhino.
+
+
+================================================================
+  STEP 4 — Start the bridge
+================================================================
+
+Every time you want to use AI with Rhino:
+
+1. Open Rhino 8
+2. In the Rhino command line, type:  AIBridge
+
+You will see a confirmation message in the Rhino console:
+  "Rhino AI Bridge v4.5 — Listening on 127.0.0.1:9544"
+
+To stop the bridge:  AIBridgeStop
+
+
+================================================================
+  STEP 5A — Connect Claude Desktop
+================================================================
+
+1. Restart Claude Desktop (the installer already patched the config)
+2. Open a new conversation
+3. Type:  ping Rhino
+4. Claude should respond with your document name and object count
+
+If it doesn't work:
+  - Make sure Rhino is open and AIBridge is running (Step 4)
+  - Check %APPDATA%\Claude\claude_desktop_config.json contains
+    an entry with "rhino-architect" in it
+
+
+================================================================
+  STEP 5B — Connect ChatGPT
+================================================================
+
+Open a terminal (Command Prompt or PowerShell) and run:
+
+  cd C:\RhinoAIBridge\server
+  set OPENAI_API_KEY=sk-your-key-here
+  uv run python chat.py --provider openai --model gpt-4o
+
+Then type your instructions at the prompt.
+
+
+================================================================
+  STEP 5C — Connect Ollama (free, runs locally)
+================================================================
+
+First install Ollama from https://ollama.com and pull a model:
+
+  ollama pull qwen2.5-coder:7b
+
+Then in a separate terminal run:
+
+  ollama serve
+
+Then open another terminal:
+
+  cd C:\RhinoAIBridge\server
+  uv run python chat.py --provider ollama --model qwen2.5-coder:7b
+
+Best local models for Rhino work:
+  - qwen2.5-coder:7b    (fast, good for simple tasks)
+  - qwen2.5-coder:32b   (best quality, needs 20GB VRAM)
+  - llama3.1:70b        (excellent tool use, needs 40GB RAM)
+
+
+================================================================
+  EXAMPLE PROMPTS TO TRY
+================================================================
+
+"ping Rhino"
+  -> Confirms connection, shows scene info
+
+"Create a 10-storey building mass, 20m x 30m footprint, 
+ 3.5m floor height, starting at Z=0"
+
+"Derive floor slabs from that mass"
+
+"Add a structural core in the centre"
+
+"Set up standard architecture layers"
+
+"Capture the viewport from the front view"
+
+"Run the 'ExtractWireframe' command on object [id]"
+
+"Report the total floor area grouped by layer"
+
+
+================================================================
+  TROUBLESHOOTING
+================================================================
+
+Problem: "Cannot connect to Rhino at 127.0.0.1:9544"
+Fix: Open Rhino and type AIBridge in the command line
+
+Problem: Plugin doesn't appear in Claude Desktop
+Fix: Restart Claude Desktop. If still missing, open
+     %APPDATA%\Claude\claude_desktop_config.json and check
+     for a "rhino-architect" entry in "mcpServers"
+
+Problem: uv command not found
+Fix: Open a NEW terminal window after install. The PATH
+     change from installation doesn't apply to already-open
+     windows.
+
+Problem: Ollama says "connection refused"
+Fix: Run "ollama serve" in a terminal BEFORE starting chat.py
+
+Problem: "PluginManager" doesn't show RhinoAIBridge
+Fix: Make sure you browsed to the .rhp file at:
+     %APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\RhinoAIBridge\
+
+
+================================================================
+  UNINSTALL
+================================================================
+
+1. In Rhino: PluginManager -> find RhinoAIBridge -> Uninstall
+2. Delete the folder:
+   %APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\RhinoAIBridge\
+3. Remove the rhino-architect entry from:
+   %APPDATA%\Claude\claude_desktop_config.json
+
+
+================================================================
+  SUPPORT & SOURCE CODE
+================================================================
+
+GitHub: https://github.com/tanishqb/rhino-mcp
+Issues: https://github.com/tanishqb/rhino-mcp/issues
+
+MIT License — free for personal and commercial use.
+
+================================================================

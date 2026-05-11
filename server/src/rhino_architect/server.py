@@ -1,0 +1,853 @@
+# RhinoAIBridge v4.5 — MCP Server
+# by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
+
+"""Rhino AI Bridge v4.5 — MCP Server.
+
+This release combines:
+  Phase 1 — lean responses (dicts → FastMCP → orjson on wire)
+  Phase 2 — scene_version etag surfaced on every response (cache key for the model)
+  Phase 3 — atomic batches + reference resolution ($1.object_ids[0] chaining)
+  Phase 5 — architect intelligence layer (massing, floors, core, facade, schedules)
+  Phase 6 — consolidated 28-tool MCP surface (was 66 in v3)
+
+Phase 4 (multiplexed protocol) and Phase 7 (System.Text.Json) intentionally deferred —
+both buy less than the cache + tool-surface work, and both have correctness pitfalls
+we'd rather defer than ship hastily.
+
+The plugin still understands the full v3/v4 command vocabulary so older flows and
+direct-batch sub-ops keep working. The MCP-exposed surface here is the curated subset
+that maps cleanly to how architects work.
+"""
+from __future__ import annotations
+
+import logging
+import sys
+from typing import Any, Optional
+
+import orjson
+from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, ConfigDict, Field
+
+from rhino_architect.protocol import (
+    RhinoCommandError,
+    RhinoConnectionError,
+    get_connection,
+)
+
+logging.basicConfig(level=logging.INFO, stream=sys.stderr)
+logger = logging.getLogger("rhino_ai_bridge")
+mcp = FastMCP("rhino_ai_bridge")
+
+
+# ── Helpers ───────────────────────────────────────────────────────
+async def _exec(command: str, params: dict[str, Any]) -> dict:
+    conn = await get_connection()
+    resp = await conn.send_command(command, params)
+    if not resp.ok:
+        raise RhinoCommandError(resp.message, resp.result)
+    return resp.result
+
+
+async def _exec_simple(command: str, params: dict[str, Any]) -> dict:
+    """Execute a command and return the raw result dict.
+
+    Returns dict, not str: FastMCP serializes once on the way out.
+    Phase 2: surfaces scene_version on every response so the model can use it as
+    an etag for caching scene queries between turns.
+    """
+    try:
+        conn = await get_connection()
+        resp = await conn.send_command(command, params)
+        if not resp.ok:
+            return {"status": "error", "message": resp.message, **(resp.result or {})}
+        result = dict(resp.result) if resp.result else {}
+        result.setdefault("status", "ok")
+        if resp.scene_version is not None and "scene_version" not in result:
+            result["scene_version"] = resp.scene_version
+        return result
+    except (RhinoConnectionError, RhinoCommandError) as e:
+        return {"status": "error", "message": str(e)}
+
+
+async def _exec_batch(
+    commands: list[dict[str, Any]],
+    atomic: bool = True,
+    stop_on_error: Optional[bool] = None,
+) -> dict:
+    """Phase 3 — execute a batch with optional atomic semantics."""
+    try:
+        conn = await get_connection()
+        resp = await conn.send_batch(commands, atomic=atomic, stop_on_error=stop_on_error)
+        result = dict(resp.result) if resp.result else {}
+        result.setdefault("status", resp.status)
+        if resp.message:
+            result.setdefault("message", resp.message)
+        if resp.scene_version is not None and "scene_version" not in result:
+            result["scene_version"] = resp.scene_version
+        return result
+    except (RhinoConnectionError, RhinoCommandError) as e:
+        return {"status": "error", "message": str(e)}
+
+
+# Tool annotation hints for the MCP client.
+RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+WR = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False}
+WI = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+DE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}
+
+
+# ── Input Models ──────────────────────────────────────────────────
+class Empty(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class QuerySceneInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope: str = "objects"  # objects | layers | summary | scene
+    filter: dict[str, Any] = Field(default_factory=dict)
+    detail: str = "summary"  # ids | summary | full
+    limit: int = Field(default=80, ge=1, le=500)
+
+
+class CreateObjectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: str = Field(
+        default="box",
+        description=(
+            "What to create. Architectural: wall, slab/floor, column, opening/window/door, roof, "
+            "massing/building_mass, core. Primitives: point, line, polyline, circle, arc, ellipse, "
+            "curve, box, sphere, cone, cylinder, surface."
+        ),
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Type-specific parameters. Examples: "
+            "box {origin:[0,0,0], size_x:6000, size_y:6000, size_z:3000}; "
+            "wall {start_point:[0,0,0], end_point:[6000,0,0], height:3000, thickness:200}; "
+            "massing {footprint:[[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]], levels:4, level_height:3600}; "
+            "core {boundary:[[9000,6000,0],[15000,6000,0],[15000,12000,0],[9000,12000,0]], height:14400}."
+        ),
+    )
+    layer: Optional[str] = None
+    name: Optional[str] = None
+    color: Optional[list[int]] = None
+    measure: bool = False
+    translation: Optional[list[float]] = None
+    rotation: Optional[list[float]] = None
+    scale: Optional[Any] = None
+
+
+class TransformObjectsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str] = Field(..., min_length=1)
+    operations: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description=(
+            "Optional sequence. Each op has type move/rotate/scale/mirror/array/align_to_grid. "
+            "Example: [{type:'move', translation:[3000,0,0]}, {type:'array', count_x:4, spacing_x:8000}]."
+        ),
+    )
+    copy: bool = False
+    translation: Optional[list[float]] = None
+    angle_degrees: Optional[float] = None
+    center: Optional[list[float]] = None
+    axis: Optional[list[float]] = None
+    scale_factor: Optional[float] = None
+    base_point: Optional[list[float]] = None
+    mirror_plane_start: Optional[list[float]] = None
+    mirror_plane_end: Optional[list[float]] = None
+    count_x: Optional[int] = None
+    count_y: Optional[int] = None
+    spacing_x: Optional[float] = None
+    spacing_y: Optional[float] = None
+
+
+class ModifyObjectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: Optional[str] = None
+    object_id: Optional[str] = None
+    name: Optional[str] = None
+    new_name: Optional[str] = None
+    new_color: Optional[list[int]] = None
+    new_layer: Optional[str] = None
+    visible: Optional[bool] = None
+    translation: Optional[list[float]] = None
+    rotation: Optional[list[float]] = None
+    scale: Optional[Any] = None
+
+
+class BatchSubCommand(BaseModel):
+    """One sub-command inside a batch. The plugin routes on `type`; `params` is passed verbatim.
+
+    `type` must be one of the plugin command names — same names as the MCP tools
+    (create_object, derive_floors_from_mass, create_core, transform_objects, modify_object,
+    delete_objects, query_scene, setup_arch_layers, batch_layer_visibility, execute_script,
+    undo, …) plus any legacy commands listed in rhino://capabilities.
+
+    `params` is the argument dict exactly as you'd pass to the corresponding standalone tool,
+    EXCEPT that any string value may start with a `$N` reference to resolve to a prior result:
+        "$1"                → whole result dict of op 1
+        "$1.object_ids[0]"  → first GUID from op 1
+        "$2.mass_id"        → mass_id field from op 2
+        "$3.bounding_box.min" → nested path
+    """
+    model_config = ConfigDict(extra="forbid")
+    type: str = Field(
+        ...,
+        description=(
+            "Plugin command name. Same names as the MCP tools: create_object, "
+            "derive_floors_from_mass, create_core, transform_objects, modify_object, "
+            "delete_objects, query_scene, report_areas, place_openings_on_facade, "
+            "align_to_grid, setup_arch_layers, batch_layer_visibility, create_layer, "
+            "capture_viewport, set_view, set_display_mode, select_objects, get_cross_section, "
+            "boolean_operation, execute_script, undo. Legacy commands also accepted."
+        ),
+    )
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Arguments for the command — same shape as calling the tool standalone. "
+            "Any string value may be a $N reference to a prior op's result, e.g. "
+            "'$1.object_ids[0]' or '$2.mass_id'."
+        ),
+    )
+
+
+class BatchCommandInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    commands: list[BatchSubCommand] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Ordered list of sub-commands. Each has a `type` (the plugin command name) "
+            "and a `params` dict. Reference earlier results with $N paths in param values."
+        ),
+    )
+    atomic: bool = True
+    stop_on_error: Optional[bool] = None
+
+
+class DeriveFloorsFromMassInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mass_id: str
+    level_heights: list[float] = []
+    levels: Optional[int] = None
+    level_height: float = Field(default=3000, gt=0)
+    slab_thickness: float = Field(default=250, gt=0)
+    start_z: Optional[float] = None
+    layer: Optional[str] = "Slab"
+
+
+class CreateCoreInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    boundary: list[list[float]] = Field(..., min_length=3)
+    height: float = Field(default=3000, gt=0)
+    z_level: Optional[float] = None
+    wall_thickness: float = Field(default=200, gt=0)
+    walls: list[dict[str, Any]] = []
+    modules: list[dict[str, Any]] = []
+    punch_through: list[str] = []
+    wall_layer: Optional[str] = "Core::Walls"
+    shaft_layer: Optional[str] = "Core::Shafts"
+
+
+class PlaceOpeningsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wall_ids: list[str] = Field(..., min_length=1)
+    rhythm: float = Field(default=3000, gt=0)
+    sill: float = 900
+    head: float = 2400
+    width: float = Field(default=1200, gt=0)
+    height: Optional[float] = None
+    margin: Optional[float] = None
+    layer: Optional[str] = "Opening"
+
+
+class AlignGridInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str] = Field(..., min_length=1)
+    grid_spacing: float = Field(default=1000, gt=0)
+    snap_z: bool = False
+
+
+class ReportAreasInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    by: str = "layer"  # layer | level | name
+    level_height: float = Field(default=3000, gt=0)
+
+
+class LayerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    color: Optional[list[int]] = None
+    visible: bool = True
+    locked: bool = False
+    parent: Optional[str] = None
+
+
+class SetupLayersInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    prefix: str = ""
+
+
+class BatchLayerVisInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    show: list[str] = []
+    hide: list[str] = []
+    isolate: Optional[str] = None
+
+
+class ObjectIdInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_id: str = Field(..., min_length=1)
+
+
+class ObjectIdsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str] = Field(..., min_length=1)
+
+
+class MeasureDistInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    point_a: list[float]
+    point_b: list[float]
+
+
+class CheckIntInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_id_a: str
+    object_id_b: str
+
+
+class ValidateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str] = []
+
+
+class DeleteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str] = Field(..., description="GUIDs to delete, or selectors: 'all', 'by_layer:Layer', 'by_name:Pattern', 'selected'.")
+
+
+class CaptureInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    width: int = 800
+    height: int = 600
+    max_bytes: int = 800000
+    format: str = "auto"   # "auto" | "png" | "jpeg"
+    quality: int = Field(default=80, ge=1, le=100)
+    restore_state: bool = Field(default=True, description="Restore viewport camera and display mode after capture. Default True — the AI can inspect the model from any angle without disrupting the user's current view.")
+    view: Optional[str] = Field(default=None, description="Temporarily switch to this named view before capturing (Top, Front, Right, Perspective, etc.). Restored if restore_state=True.")
+    display_mode: Optional[str] = Field(default=None, description="Temporarily switch to this display mode before capturing (Wireframe, Shaded, Rendered, Arctic, etc.). Restored if restore_state=True.")
+
+
+class ViewInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    view_name: str
+
+
+class DisplayInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    mode: str
+
+
+class SelectInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_ids: list[str]
+    clear_selection: bool = True
+
+
+class CrossSectionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    object_id: str
+    z_height: float
+    layer: Optional[str] = None
+    name: Optional[str] = None
+
+
+class BooleanInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    operation: str
+    object_id_a: str
+    object_id_b: str
+    delete_input: bool = True
+
+
+class ScriptInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    code: str
+    undo_name: Optional[str] = None
+    default_layer: Optional[str] = None
+
+
+class UndoInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    count: int = 1
+
+
+class LogInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    count: int = 50
+    errors_only: bool = False
+
+
+class SetCameraInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    location: Optional[list[float]] = Field(None, description="Camera position [x, y, z] in model units. Omit when using box_min/box_max.")
+    target: Optional[list[float]] = Field(None, description="Camera target [x, y, z]. Omit when using box_min/box_max.")
+    lens_length: Optional[float] = Field(None, description="Lens focal length in mm. 50=normal, 24=wide, 135=tele.")
+    projection: Optional[str] = Field(None, description="'perspective' | 'parallel'. Defaults to current.")
+    box_min: Optional[list[float]] = Field(None, description="Bounding box min [x,y,z] to zoom-frame. Provide with box_max — camera distance auto-computed.")
+    box_max: Optional[list[float]] = Field(None, description="Bounding box max [x,y,z] to zoom-frame. Provide with box_min.")
+
+
+class GetRhinoCommandsInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    filter: str = Field(default="", description="Case-insensitive substring filter. Empty = return all (capped to 200).")
+
+
+class LayerMaterialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    layer: str = Field(..., description="Layer name (full path or short name).")
+    color: Optional[list[int]] = Field(None, description="Diffuse color [R, G, B] or [R, G, B, A], 0-255.")
+    roughness: Optional[float] = Field(None, ge=0.0, le=1.0, description="PBR roughness 0=mirror, 1=matte.")
+    metallic: Optional[float] = Field(None, ge=0.0, le=1.0, description="PBR metallic factor 0=dielectric, 1=metal.")
+    opacity: Optional[float] = Field(None, ge=0.0, le=1.0, description="Opacity 0=transparent, 1=opaque.")
+    emission: Optional[list[int]] = Field(None, description="Emissive color [R, G, B], 0-255.")
+
+
+class RunCommandInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    command: str = Field(..., description="Rhino command string, exactly as typed in the command line (e.g. 'Contour', '_Box 0,0,0 1000,1000,3000').")
+    echo: bool = Field(default=False, description="Echo the command to Rhino's command line. Default False (silent).")
+
+
+# ── Capabilities Resource ─────────────────────────────────────────
+# Long-tail commands (still callable inside `batch`) and discoverable workflows.
+CAPABILITIES: dict[str, Any] = {
+    "version": "4.5.0",
+    "phase": "1+2+3+5+6",
+    "deferred_phases": {
+        "phase_4": "multiplexed protocol — deferred (UI-thread serialization makes the gain marginal)",
+        "phase_7": "System.Text.Json source generators — deferred (low ROI vs. wider risk)",
+    },
+    "tool_surface": "consolidated",
+    "preferred_tools": [
+        "query_scene", "create_object", "transform_objects", "batch", "report_areas",
+        "capture_viewport", "derive_floors_from_mass", "place_openings_on_facade",
+    ],
+    "universal_create_types": {
+        "architecture": ["wall", "slab", "floor", "column", "opening", "window", "door", "roof", "massing", "building_mass", "core"],
+        "primitives": ["point", "line", "polyline", "circle", "arc", "ellipse", "curve", "box", "sphere", "cone", "cylinder", "surface"],
+    },
+    "transform_operations": ["move", "rotate", "scale", "mirror", "array", "align_to_grid"],
+    "object_selectors": ["selected", "all", "last_created", "by_layer:LayerName", "by_name:Pattern", "<guid>"],
+    "batch_features": {
+        "atomic": True,
+        "rollback_on_failure": True,
+        "reference_resolution": "$N or $N.path[i]",
+        "examples": ["$1.object_ids[0]", "$2.mass_id", "$3.bounding_box.min"],
+        "per_op_errors": True,
+    },
+    "etag": {
+        "field": "scene_version",
+        "use": "Compare across calls. Same version = scene unchanged. Skip redundant queries.",
+    },
+    "legacy_plugin_commands_available_via_batch": [
+        "create_wall", "create_slab", "create_column", "create_opening", "create_roof",
+        "create_box", "create_cylinder", "create_sphere", "create_line", "create_polyline",
+        "loft", "sweep1", "pipe", "extrude_curve", "fillet_edges", "offset_curve",
+        "extrude_curves", "join_curves", "offset_and_extrude", "move_objects",
+        "rotate_objects", "scale_objects", "mirror_objects", "array_objects",
+        "list_layers", "set_active_layer", "delete_layer",
+        "set_object_layer", "get_context", "get_scene_summary", "get_objects",
+        "get_object_details", "validate_architecture", "suggest_tools", "lint_script",
+        "get_camera_target", "redo", "get_log_stats", "create_floor_stack",
+        "group_objects", "ungroup_objects", "get_groups", "hollow_solid",
+        "create_objects_batch",
+    ],
+    "examples": {
+        "massing_first_move": {
+            "tool": "create_object",
+            "args": {
+                "type": "massing",
+                "params": {
+                    "footprint": [[0, 0, 0], [30000, 0, 0], [30000, 18000, 0], [0, 18000, 0]],
+                    "levels": 4,
+                    "level_height": 3600,
+                },
+                "layer": "Massing",
+                "name": "Office_4L",
+            },
+        },
+        "atomic_office_in_one_call": {
+            "tool": "batch",
+            "args": {
+                "atomic": True,
+                "commands": [
+                    {"type": "create_object", "params": {"type": "massing", "params": {
+                        "footprint": [[0, 0, 0], [30000, 0, 0], [30000, 18000, 0], [0, 18000, 0]],
+                        "levels": 4, "level_height": 3600,
+                    }}},
+                    {"type": "derive_floors_from_mass", "params": {
+                        "mass_id": "$1.mass_id",
+                        "level_heights": [4200, 3600, 3600, 3600],
+                    }},
+                ],
+            },
+        },
+        "facade_in_one_call": {
+            "tool": "place_openings_on_facade",
+            "args": {
+                "wall_ids": ["by_layer:Wall"],
+                "rhythm": 3000,
+                "width": 1500,
+                "sill": 900,
+                "head": 2400,
+            },
+        },
+    },
+}
+
+
+# ── Resource ──────────────────────────────────────────────────────
+@mcp.resource("rhino://capabilities")
+def capabilities() -> str:
+    """Long-tail capabilities, examples, legacy command names, preferred workflows.
+
+    Resources are returned as serialized text; this one ships as JSON for easy parsing.
+    """
+    return orjson.dumps(CAPABILITIES).decode("utf-8")
+
+
+@mcp.resource("rhino://arch-defaults")
+async def arch_defaults_resource() -> str:
+    """Standard architectural defaults: wall thicknesses, opening sizes, layer names."""
+    return orjson.dumps({
+        "wall": {"height": 3000, "thickness": 200},
+        "slab": {"thickness": 200},
+        "column": {"width": 400, "depth": 400, "height": 3000},
+        "door": {"width": 900, "height": 2100},
+        "window": {"width": 1200, "height": 1500, "sill": 900},
+        "roof": {"thickness": 200},
+        "massing": {"level_height": 3000, "core_layer": "Core"},
+        "layers": ["Wall", "Slab", "Column", "Beam", "Opening", "Roof", "Stair", "Furniture", "Site", "Grid", "Annotation", "Massing", "Core::Walls", "Core::Shafts"],
+    }).decode("utf-8")
+
+
+# ── Tools ─────────────────────────────────────────────────────────
+
+@mcp.tool(name="ping", annotations=RO)
+async def ping(params: Empty) -> dict:
+    """Verify Rhino is reachable. Returns build hash, doc info, units, and current scene_version.
+
+    Cheap (sub-ms on server). Useful at conversation start, and as an etag check —
+    if scene_version matches what you saw last time, the scene is unchanged and you
+    can skip re-querying."""
+    try:
+        conn = await get_connection()
+        data = await conn.ping()
+        data["capabilities_resource"] = "rhino://capabilities"
+        return data
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool(name="query_scene", annotations=RO)
+async def query_scene(params: QuerySceneInput) -> dict:
+    """Universal scene query — replaces get_context, get_scene_summary, get_objects, list_layers.
+
+    scope='summary' for full scene summary (counts, bbox, layers).
+    scope='layers' for layer list with counts.
+    scope='objects' (default) with filter={layer, type, name_pattern} and detail=ids/summary/full.
+
+    Phase 2: served from the snapshot cache, so all branches are O(1) or O(M) rather than O(N).
+    Returns scene_version — use it as an etag across calls."""
+    return await _exec_simple("query_scene", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="create_object", annotations=WR)
+async def create_object(params: CreateObjectInput) -> dict:
+    """Universal creation tool. Prefer this over primitive-specific tools.
+
+    Architecture types route to specialized creators (wall, slab, column, opening, roof,
+    massing, core). Primitives (box, sphere, cylinder, etc.) go through the generic path.
+
+    Returns object_ids and bounding_box. Pass measure=true to also compute area/volume
+    (off by default — saves a Brep integration on every floor of a 30-floor stack).
+
+    Examples:
+    - type='massing', params={footprint:[[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]], levels:4, level_height:3600}
+    - type='wall', params={start_point:[0,0,0], end_point:[6000,0,0], height:3000, thickness:200}
+    - type='box', params={origin:[0,0,0], size_x:8000, size_y:8000, size_z:3600}
+    - type='core', params={boundary:[[9000,6000,0],[15000,6000,0],[15000,12000,0],[9000,12000,0]], height:14400}
+    """
+    return await _exec_simple("create_object", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="transform_objects", annotations=WR)
+async def transform_objects(params: TransformObjectsInput) -> dict:
+    """Universal transform tool — replaces move/rotate/scale/mirror/array.
+
+    For one transform, use shorthand fields. For chained transforms, use operations[]:
+    each op's output object_ids feed the next, so you can move-then-array in a single call.
+
+    Selectors: 'selected', 'all', 'last_created', 'by_layer:Wall', 'by_name:Floor*', or GUIDs."""
+    return await _exec_simple("transform_objects", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="modify_object", annotations=WR)
+async def modify_object(params: ModifyObjectInput) -> dict:
+    """Rename, recolor, change layer, show/hide, or apply a simple transform to one object."""
+    return await _exec_simple("modify_object", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="batch", annotations=WR)
+async def batch(params: BatchCommandInput) -> dict:
+    """Run many Rhino commands in one round-trip. Phase 3 — supports atomic rollback and references.
+
+    Each sub-command in `commands` must be: {"type": "<command_name>", "params": {...}}
+    where `type` is the plugin command name (same as the MCP tool names).
+
+    Example — build a massing and derive floors atomically in one call:
+        commands=[
+          {"type": "create_object",
+           "params": {"type": "massing",
+                      "params": {"footprint": [[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]],
+                                 "levels": 4, "level_height": 3600}}},
+          {"type": "derive_floors_from_mass",
+           "params": {"mass_id": "$1.mass_id", "level_heights": [4200, 3600, 3600, 3600]}}
+        ]
+
+    With atomic=true, the entire batch is wrapped in one Rhino undo record. If any sub-op
+    fails, the whole batch rolls back — no partial state.
+
+    References: any string value starting with "$N" resolves to the Nth (1-indexed) prior
+    result, with optional dot/bracket path:
+        $1                    → whole result dict of op 1
+        $1.object_ids[0]      → first GUID created by op 1
+        $2.mass_id            → mass_id field from op 2
+        $3.bounding_box.min   → nested path
+
+    This is how 'build a 4-story office with core and windows' becomes one call instead of 50.
+    Legacy commands (any name from rhino://capabilities) are callable inside batch."""
+    raw_commands = [c.model_dump() for c in params.commands]
+    return await _exec_batch(raw_commands, atomic=params.atomic, stop_on_error=params.stop_on_error)
+
+
+# ── Architect intelligence layer ─────────────────────────────────
+
+@mcp.tool(name="derive_floors_from_mass", annotations=WR)
+async def derive_floors_from_mass(params: DeriveFloorsFromMassInput) -> dict:
+    """Section a massing solid at floor heights and extrude each section into a slab.
+
+    Variable level_heights[] for non-uniform floor heights (e.g. taller ground floor).
+    Pair with create_object(type='massing') in a batch — chain via $1.mass_id."""
+    return await _exec_simple("derive_floors_from_mass", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="create_core", annotations=WR)
+async def create_core(params: CreateCoreInput) -> dict:
+    """Create a building core as a unit — perimeter walls plus lift, stair, and shaft modules.
+
+    Optional punch_through[] subtracts the core modules from listed massing solids,
+    carving the actual voids in your floor stack."""
+    return await _exec_simple("create_core", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="place_openings_on_facade", annotations=WR)
+async def place_openings_on_facade(params: PlaceOpeningsInput) -> dict:
+    """Distribute repeated openings (windows or doors) along walls at a constant rhythm.
+
+    The whole facade in one call. Pass wall_ids=['by_layer:Wall'] to facade-ize every wall."""
+    return await _exec_simple("place_openings_on_facade", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="align_to_grid", annotations=WR)
+async def align_to_grid(params: AlignGridInput) -> dict:
+    """Snap object bounding-box centers to an architectural grid. snap_z controls vertical."""
+    return await _exec_simple("align_to_grid", params.model_dump())
+
+
+@mcp.tool(name="report_areas", annotations=RO)
+async def report_areas(params: ReportAreasInput) -> dict:
+    """GFA / NFA-style area schedule grouped by layer, level, or name.
+
+    For solid Breps with known volume and bbox height, plan_area = volume / height.
+    Falls back to top-face area, then to bbox footprint."""
+    return await _exec_simple("report_areas", params.model_dump())
+
+
+# ── Layers ─────────────────────────────────────────────────────────
+
+@mcp.tool(name="create_layer", annotations=WI)
+async def create_layer(params: LayerInput) -> dict:
+    """Create or update a layer."""
+    return await _exec_simple("create_layer", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="setup_arch_layers", annotations=WI)
+async def setup_arch_layers(params: SetupLayersInput) -> dict:
+    """Create the standard architectural layer set: Wall, Slab, Column, Beam, Opening, Roof, Stair, etc."""
+    return await _exec_simple("setup_arch_layers", {"prefix": params.prefix})
+
+
+@mcp.tool(name="batch_layer_visibility", annotations=WI)
+async def batch_layer_visibility(params: BatchLayerVisInput) -> dict:
+    """Show/hide/isolate layers in one call."""
+    return await _exec_simple("batch_layer_visibility", params.model_dump(exclude_none=True))
+
+
+# ── Analysis ───────────────────────────────────────────────────────
+
+@mcp.tool(name="measure_object", annotations=RO)
+async def measure_object(params: ObjectIdInput) -> dict:
+    """Measure area, volume, length, and bounding box for one object."""
+    return await _exec_simple("measure_object", {"object_id": params.object_id})
+
+
+@mcp.tool(name="measure_distance", annotations=RO)
+async def measure_distance(params: MeasureDistInput) -> dict:
+    """Distance between two points."""
+    return await _exec_simple("measure_distance", params.model_dump())
+
+
+@mcp.tool(name="check_intersection", annotations=RO)
+async def check_intersection(params: CheckIntInput) -> dict:
+    """Check whether two Rhino objects intersect (bounding-box check)."""
+    return await _exec_simple("check_intersection", params.model_dump())
+
+
+@mcp.tool(name="validate_objects", annotations=RO)
+async def validate_objects(params: ValidateInput) -> dict:
+    """Validate geometry. Empty object_ids means whole scene (capped to 100 Breps)."""
+    return await _exec_simple("validate_objects", params.model_dump())
+
+
+# ── Viewport ───────────────────────────────────────────────────────
+
+@mcp.tool(name="capture_viewport", annotations=RO)
+async def capture_viewport(params: CaptureInput) -> dict:
+    """Capture the active viewport as JPEG (default for shaded) or PNG (default for wireframe).
+
+    Phase 1 — no disk round-trip. format='auto' picks based on display mode.
+    restore_state=True (default) saves and restores the viewport camera + display mode after
+    capture, so inspecting the model from any angle never disrupts the user's current view.
+    Pass view= and/or display_mode= to temporarily switch before capturing."""
+    return await _exec_simple("capture_viewport", params.model_dump())
+
+
+@mcp.tool(name="set_view", annotations=WI)
+async def set_view(params: ViewInput) -> dict:
+    """Switch viewport to a named projection: Top, Front, Right, Left, Back, Perspective."""
+    return await _exec_simple("set_view", params.model_dump())
+
+
+@mcp.tool(name="set_display_mode", annotations=WI)
+async def set_display_mode(params: DisplayInput) -> dict:
+    """Set the active viewport display mode: Wireframe, Shaded, Rendered, Arctic, Ghosted, etc."""
+    return await _exec_simple("set_display_mode", params.model_dump())
+
+
+@mcp.tool(name="select_objects", annotations=WI)
+async def select_objects(params: SelectInput) -> dict:
+    """Select objects by GUID. clear_selection=True (default) deselects everything first."""
+    return await _exec_simple("select_objects", params.model_dump())
+
+
+@mcp.tool(name="set_camera", annotations=WI)
+async def set_camera(params: SetCameraInput) -> dict:
+    """Precisely position the viewport camera.
+
+    Two modes:
+    1. Explicit: supply location + target (+ optional lens_length, projection).
+    2. Bbox framing: supply box_min + box_max — the plugin auto-computes a camera distance
+       that fits the bounding box in the viewport.
+
+    Examples:
+        set_camera(location=[10000, -15000, 8000], target=[0, 0, 3000])
+        set_camera(box_min=[0,0,0], box_max=[12000,8000,15000], projection="perspective")"""
+    return await _exec_simple("set_camera", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="get_rhino_commands", annotations=RO)
+async def get_rhino_commands(params: GetRhinoCommandsInput) -> dict:
+    """List all registered Rhino command names (live, not hardcoded).
+
+    Use this to discover whether a command like Contour, FilletEdge, or ProjectCurves exists
+    before calling it via execute_script or batch. filter narrows by substring (case-insensitive)."""
+    return await _exec_simple("get_rhino_commands", params.model_dump())
+
+
+# ── Geometry ops ─────────────────────────────────────────────────
+
+@mcp.tool(name="get_cross_section", annotations=WR)
+async def get_cross_section(params: CrossSectionInput) -> dict:
+    """Cut a solid at a Z height and return section curves — useful for plan views."""
+    return await _exec_simple("get_cross_section", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="boolean_operation", annotations=WR)
+async def boolean_operation(params: BooleanInput) -> dict:
+    """Boolean union / difference / intersection between two objects."""
+    return await _exec_simple("boolean_operation", params.model_dump())
+
+
+@mcp.tool(name="delete_objects", annotations=WR)
+async def delete_objects(params: DeleteInput) -> dict:
+    """Delete objects by GUID or selector string: 'all', 'by_layer:Layer', 'by_name:Pattern', 'selected'."""
+    return await _exec_simple("delete_objects", params.model_dump())
+
+# ── Escape hatches ────────────────────────────────────────────────
+
+@mcp.tool(name="execute_script", annotations=WR)
+async def execute_script(params: ScriptInput) -> dict:
+    """Run arbitrary Python 3 inside Rhino. Powerful escape hatch — prefer structured tools.
+
+    Auto-imported preamble: rhinoscriptsyntax as rs, scriptcontext as sc, Rhino, System.
+    Use undo_name to wrap in an undo record."""
+    return await _exec_simple("execute_script", params.model_dump(exclude_none=True))
+
+
+@mcp.tool(name="undo", annotations=WI)
+async def undo(params: UndoInput) -> dict:
+    """Undo one or more Rhino operations."""
+    return await _exec_simple("undo", params.model_dump())
+
+
+@mcp.tool(name="get_log", annotations=RO)
+async def get_log(params: LogInput) -> dict:
+    """Fetch recent bridge log entries for debugging. errors_only=True filters to errors/warnings."""
+    return await _exec_simple("get_log", params.model_dump())
+
+
+# ── Materials ─────────────────────────────────────────────────────
+
+@mcp.tool(name="set_layer_material", annotations=WI)
+async def set_layer_material(params: LayerMaterialInput) -> dict:
+    """Set PBR material properties on a layer — color, roughness, metallic, opacity, emission.
+
+    Updates both the layer display color and the render material (Rendered/Arctic/Raytraced).
+
+    Examples:
+        set_layer_material(layer="Wall", color=[220, 210, 195], roughness=0.8)
+        set_layer_material(layer="Glass", color=[180, 220, 255], opacity=0.2, roughness=0.05)
+        set_layer_material(layer="Core::Walls", color=[80, 80, 80], metallic=0.0, roughness=0.9)"""
+    return await _exec_simple("set_layer_material", params.model_dump(exclude_none=True))
+
+
+# ── Native commands ───────────────────────────────────────────────
+
+@mcp.tool(name="run_command", annotations=WR)
+async def run_command(params: RunCommandInput) -> dict:
+    """Execute any Rhino command string via RhinoApp.RunScript.
+
+    Escape hatch for commands not covered by structured tools. Tracks newly created objects.
+    Prefer structured tools when available — run_command has no rollback guarantee.
+
+    Examples:
+        run_command(command="_Contour _SelAll _Enter 0,0,0 0,0,1 3000")
+        run_command(command="_FilletEdge _SelId <guid> _Enter 50")
+        run_command(command="_Make2D _SelAll _Enter")"""
+    return await _exec_simple("run_command", params.model_dump())
