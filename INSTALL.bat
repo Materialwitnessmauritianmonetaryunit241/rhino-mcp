@@ -11,11 +11,11 @@ setlocal enabledelayedexpansion
 title RhinoAIBridge Installer by tanishqb
 
 set "ROOT=%~dp0"
-:: Remove trailing backslash
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 set "DIST_DIR=%ROOT%\dist\plugin"
 set "SERVER_DIR=%ROOT%\server"
+set "SCRIPTS_DIR=%ROOT%\scripts"
 set "RHINO_PLUGIN_DIR=%APPDATA%\McNeel\Rhinoceros\8.0\Plug-ins\RhinoAIBridge"
 
 echo.
@@ -48,21 +48,21 @@ if not exist "%DIST_DIR%\RhinoAIBridge.rhp" (
 )
 
 if not exist "%RHINO_PLUGIN_DIR%" mkdir "%RHINO_PLUGIN_DIR%"
-copy /Y "%DIST_DIR%\RhinoAIBridge.rhp"                       "%RHINO_PLUGIN_DIR%\" >nul
-copy /Y "%DIST_DIR%\Newtonsoft.Json.dll"                     "%RHINO_PLUGIN_DIR%\" >nul
+copy /Y "%DIST_DIR%\RhinoAIBridge.rhp"                    "%RHINO_PLUGIN_DIR%\" >nul
+copy /Y "%DIST_DIR%\Newtonsoft.Json.dll"                  "%RHINO_PLUGIN_DIR%\" >nul
 if exist "%DIST_DIR%\System.Drawing.Common.dll" (
-    copy /Y "%DIST_DIR%\System.Drawing.Common.dll"           "%RHINO_PLUGIN_DIR%\" >nul
+    copy /Y "%DIST_DIR%\System.Drawing.Common.dll"        "%RHINO_PLUGIN_DIR%\" >nul
 )
 if exist "%DIST_DIR%\Microsoft.Win32.SystemEvents.dll" (
-    copy /Y "%DIST_DIR%\Microsoft.Win32.SystemEvents.dll"    "%RHINO_PLUGIN_DIR%\" >nul
+    copy /Y "%DIST_DIR%\Microsoft.Win32.SystemEvents.dll" "%RHINO_PLUGIN_DIR%\" >nul
 )
-echo  OK  ^(plugin installed to %RHINO_PLUGIN_DIR%^)
+echo  OK  (plugin installed to %RHINO_PLUGIN_DIR%)
 
-:: -- [2] Install / verify uv -----------------------------------------------------
+:: -- [2] Install / verify uv ------------------------------------------------------
 echo  [2/3] Checking uv (Python package manager)...
 where uv >nul 2>&1
 if errorlevel 1 (
-    echo  uv not found -- installing now ^(this only happens once^)...
+    echo  uv not found -- installing now (this only happens once)...
     powershell -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex"
     if errorlevel 1 (
         echo.
@@ -73,12 +73,11 @@ if errorlevel 1 (
         pause
         exit /b 1
     )
-    :: Refresh PATH so uv is visible in this session
     set "PATH=%USERPROFILE%\.local\bin;%PATH%"
     where uv >nul 2>&1
     if errorlevel 1 (
         echo.
-        echo  uv was installed but is not on PATH yet.
+        echo  uv installed but PATH not refreshed yet.
         echo  Please close this window and run INSTALL.bat again.
         echo.
         pause
@@ -88,7 +87,7 @@ if errorlevel 1 (
 )
 echo  OK
 
-:: -- [3] Install Python MCP server dependencies ----------------------------------
+:: -- [3] Install Python MCP server dependencies -----------------------------------
 echo  [3/3] Installing Python server dependencies...
 cd /d "%SERVER_DIR%"
 uv sync
@@ -100,32 +99,15 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-echo  OK  ^(MCP server ready^)
+echo  OK  (MCP server ready)
 
-:: -- Configure Claude Desktop (PowerShell JSON patch, no Python needed) ----------
+:: -- Configure Claude Desktop -----------------------------------------------------
 echo.
 echo  Configuring Claude Desktop...
-set "CLAUDE_CONFIG=%APPDATA%\Claude\claude_desktop_config.json"
-
-powershell -ExecutionPolicy Bypass -Command ^
-  "$cfg_path = '%CLAUDE_CONFIG%'; " ^
-  "$srv = '%SERVER_DIR%'.Replace('\','\\'); " ^
-  "if (-not (Test-Path (Split-Path $cfg_path))) { Write-Host '  Claude Desktop not found -- skipping.'; exit 0 } " ^
-  "if (Test-Path $cfg_path) { " ^
-  "    $bak = $cfg_path + '.backup_' + (Get-Date -Format 'yyyyMMdd_HHmmss'); " ^
-  "    Copy-Item $cfg_path $bak; " ^
-  "    Write-Host ('  Backed up config to: ' + $bak); " ^
-  "    $json = Get-Content $cfg_path -Raw | ConvertFrom-Json " ^
-  "} else { $json = [PSCustomObject]@{} } " ^
-  "if (-not $json.PSObject.Properties['mcpServers']) { $json | Add-Member -NotePropertyName mcpServers -NotePropertyValue ([PSCustomObject]@{}) } " ^
-  "$entry = [PSCustomObject]@{ command='uv'; args=@('--directory','%SERVER_DIR%','run','rhino-architect') }; " ^
-  "$json.mcpServers | Add-Member -NotePropertyName 'rhino-architect' -NotePropertyValue $entry -Force; " ^
-  "$json | ConvertTo-Json -Depth 10 | Set-Content $cfg_path -Encoding UTF8; " ^
-  "Write-Host '  Claude Desktop configured successfully.'; " ^
-  "Write-Host '  MCP server path: %SERVER_DIR%'; " ^
-  "Write-Host '  Restart Claude Desktop to activate.'"
-
+powershell -ExecutionPolicy Bypass -File "%SCRIPTS_DIR%\patch_config.ps1" "%SERVER_DIR%"
 echo.
+
+:: -- Done -------------------------------------------------------------------------
 echo  ============================================================
 echo    INSTALLATION COMPLETE  ^|  RhinoAIBridge by tanishqb
 echo  ============================================================
@@ -135,10 +117,10 @@ echo.
 echo  1. Open Rhino 8
 echo  2. Run command:  PlugInManager
 echo     Click Install ^> browse to: %RHINO_PLUGIN_DIR%\RhinoAIBridge.rhp
-echo     ^(Skip on future installs -- it auto-loads^)
+echo     (Skip on future installs -- it auto-loads)
 echo.
 echo  3. In Rhino command line type:  AIBridge
-echo     ^(Do this every time you open Rhino^)
+echo     (Do this every time you open Rhino)
 echo.
 echo  --- Claude Desktop ------------------------------------
 echo  4. Restart Claude Desktop
@@ -147,9 +129,9 @@ echo.
 echo  --- ChatGPT or Ollama (optional) ---------------------
 echo     cd "%SERVER_DIR%"
 echo     uv run python chat.py --provider ollama --model qwen2.5-coder:7b
-echo     uv run python chat.py --provider openai  ^(set OPENAI_API_KEY first^)
+echo     uv run python chat.py --provider openai  (set OPENAI_API_KEY first)
 echo.
-echo  --- Docs and Help -------------------------------------
+echo  --- Docs and Help ------------------------------------
 echo     https://github.com/tanishqbhattad/rhino-mcp
 echo.
 echo  ============================================================
