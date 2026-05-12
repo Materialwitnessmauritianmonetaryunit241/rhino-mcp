@@ -109,11 +109,12 @@ echo.
 pause
 exit /b 1
 
-:: -- Configure Claude Desktop -----------------------------------------------------
+:: -- Configure Claude Desktop (via Python -- bulletproof JSON) --------------------
 :config
 echo.
 echo  Configuring Claude Desktop...
-powershell -ExecutionPolicy Bypass -File "%SCRIPTS_DIR%\patch_config.ps1" "%SERVER_DIR%"
+cd /d "%SERVER_DIR%"
+uv run python "%SCRIPTS_DIR%\patch_claude_config.py" "%SERVER_DIR%"
 echo.
 
 :: -- Done -------------------------------------------------------------------------
