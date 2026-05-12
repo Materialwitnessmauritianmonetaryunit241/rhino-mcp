@@ -851,3 +851,14 @@ async def run_command(params: RunCommandInput) -> dict:
         run_command(command="_FilletEdge _SelId <guid> _Enter 50")
         run_command(command="_Make2D _SelAll _Enter")"""
     return await _exec_simple("run_command", params.model_dump())
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def main():
+    """Entry point for the rhino-architect MCP server (called by pyproject.toml script)."""
+    mcp.run()
+
+
+if __name__ == "__main__":
+    main()
