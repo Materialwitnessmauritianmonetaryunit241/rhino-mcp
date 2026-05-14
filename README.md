@@ -219,4 +219,4 @@ MIT — see LICENSE. Free for personal and commercial use.
 
 ---
 
-*Built by tanishqb — https://github.com/tanishqb*
+*Built by Tanishq Bhattad — https://github.com/tanishqb*
