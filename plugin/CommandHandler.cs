@@ -115,6 +115,11 @@ namespace RhinoAIBridge
         public JObject Dispatch(JObject cmd)
         {
             string type = cmd["type"]?.ToString() ?? "";
+
+            // Trust-level check replaces legacy _SAFE_MODE
+            var trustErr = TrustManager.CheckCommand(type);
+            if (trustErr != null) return trustErr;
+
             var p = cmd["params"] as JObject ?? new JObject();
             if (type == "batch")
             {
@@ -139,6 +144,11 @@ namespace RhinoAIBridge
         JObject DispatchBatch(JObject cmd)
         {
             var commands = cmd["commands"] as JArray ?? new JArray();
+
+            // Dry run: validate without executing
+            if (cmd["dry_run"]?.ToObject<bool>() == true)
+                return BatchPlanner.Preview(commands, _commands);
+
             bool atomic = cmd["atomic"]?.ToObject<bool>() ?? false;
             // For atomic batches stop_on_error defaults to true (rollback semantics need it).
             bool stopOnError = cmd["stop_on_error"]?.ToObject<bool>() ?? atomic;
@@ -798,7 +808,7 @@ namespace RhinoAIBridge
         {
             var snap = Snap;
             string scope = (p["scope"]?.ToString() ?? "objects").ToLowerInvariant();
-            string detail = (p["detail"]?.ToString() ?? "summary").ToLowerInvariant();
+            string detail = (p["mode"]?.ToString() ?? p["detail"]?.ToString() ?? "summary").ToLowerInvariant();
             var f = p["filter"] as JObject ?? new JObject();
             int limit = p["limit"]?.ToObject<int>() ?? (detail == "full" ? 200 : 80);
 
@@ -1638,6 +1648,12 @@ namespace RhinoAIBridge
         JObject DeleteObjects(JObject p)
         {
             var ids = ResIds(p["object_ids"]);
+            if (p["dry_run"]?.ToObject<bool>() == true)
+            {
+                var prev = new JArray();
+                foreach (var sid in ids) { if (Guid.TryParse(sid, out var g)) { var o = Doc?.Objects.FindId(g); if (o != null) prev.Add(new JObject { ["id"] = sid, ["type"] = o.ObjectType.ToString(), ["layer"] = Doc.Layers[o.Attributes.LayerIndex]?.FullPath ?? "" }); } }
+                return new JObject { ["status"] = "ok", ["dry_run"] = true, ["would_delete"] = prev, ["count"] = prev.Count };
+            }
             int c = ids.Count(sid => Doc.Objects.Delete(new Guid(sid), true));
             RedrawScope.Mark();
             return Ok(("deleted_count", c));
@@ -1966,6 +1982,21 @@ namespace RhinoAIBridge
                     ("height", outH),
                     ("bytes", bytes.Length));
                 if (outW != w) r["note"] = $"Scaled to {outW}x{outH}";
+                // Viewport metadata -- camera context for every capture
+                try {
+                    var snap2 = SceneSnapshotRegistry.Active;
+                    r["camera"] = new JObject {
+                        ["location"]     = PA(vp.CameraLocation),
+                        ["target"]       = PA(vp.CameraTarget),
+                        ["projection"]   = vp.IsParallelProjection ? "parallel" : "perspective",
+                        ["display_mode"] = vp.DisplayMode?.EnglishName ?? "Unknown",
+                        ["lens_mm"]      = vp.IsParallelProjection ? 0.0 : Math.Round(vp.Camera35mmLensLength, 1)
+                    };
+                    r["scene"] = new JObject {
+                        ["visible_objects"] = Doc.Objects.Count(o => !o.IsDeleted && o.Visible),
+                        ["total_objects"]   = snap2?.Count ?? 0
+                    };
+                } catch { /* metadata best-effort */ }
                 return r;
             }
             finally

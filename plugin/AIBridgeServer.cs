@@ -26,7 +26,7 @@ namespace RhinoAIBridge
     public class AIBridgeServer
     {
         private const int PORT = 9544;
-        public const string PROTOCOL_VERSION = "4.5";
+        public const string PROTOCOL_VERSION = "4.6";
 
         private TcpListener _listener;
         private CancellationTokenSource _cts;
@@ -90,6 +90,7 @@ namespace RhinoAIBridge
             {
                 AIBridgeLogger.Log(LogLevel.ERROR, "Server", "ChangeTracker init failed", error: ctEx.ToString());
             }
+            TrustManager.Initialize();
             try
             {
                 _listener = new TcpListener(IPAddress.Parse("127.0.0.1"), PORT);
@@ -178,6 +179,11 @@ namespace RhinoAIBridge
                         var timer = AIBridgeLogger.StartTimer();
                         string cmdType = cmd["type"]?.ToString() ?? "?";
                         JObject result;
+                        if (cmdType != "ping")
+                        {
+                            var authErr = TrustManager.CheckToken(cmd["auth_token"]?.ToString() ?? "");
+                            if (authErr != null) { result = authErr; goto sendResponse; }
+                        }
 
                         try
                         {
@@ -233,6 +239,7 @@ namespace RhinoAIBridge
                             AIBridgeLogger.LogCommand(cmdType, "{}", timer, "error", e.ToString());
                         }
 
+                        sendResponse:
                         // â”€â”€ Serialize + optional gzip compression â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                         // Protocol (server â†’ client): [1-byte flag][4-byte big-endian length][payload]
                         //   flag 0x00 = raw UTF-8 JSON
@@ -311,10 +318,12 @@ namespace RhinoAIBridge
                     "gzip_compression",
                     "pbr_materials",
                     "run_command",
-                    "set_camera",
+                    "set_camera", "auth_token", "trust_levels", "dry_run",
+                    "viewport_metadata", "query_modes", "design_memory", "scene_sync", "semantic_intelligence",
                 },
                 ["capabilities_resource"] = "rhino://capabilities",
-                ["safe_mode"] = false,
+                ["safe_mode"] = TrustManager.Level == TrustLevel.Safe,
+                ["trust_level"] = TrustManager.Level.ToString().ToLowerInvariant(),
             };
         }
 

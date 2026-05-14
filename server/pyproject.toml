@@ -1,4 +1,4 @@
-﻿[project]
+[project]
 name = "rhino-architect"
 version = "4.5.0"
 description = "AI Bridge MCP server for Rhino 8 — v4.5 (Phase 1+2+3+5+6)"
