@@ -1793,7 +1793,21 @@ namespace RhinoAIBridge
             List<RhinoObject> objs;
             if (ids != null && ids.Count > 0)
             {
-                objs = ids.Select(id => Doc.Objects.FindId(new Guid(id))).Where(o => o != null).ToList();
+                objs = new List<RhinoObject>();
+                foreach (var id in ids)
+                {
+                    if (id.StartsWith("by_layer:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var layerName = id.Substring(9);
+                        int li = Doc.Layers.FindByFullPath(layerName, -1);
+                        if (li >= 0) objs.AddRange(AllObjs().Where(o => o.Attributes.LayerIndex == li));
+                    }
+                    else if (Guid.TryParse(id, out var g))
+                    {
+                        var o = Doc.Objects.FindId(g);
+                        if (o != null) objs.Add(o);
+                    }
+                }
             }
             else
             {
@@ -2575,3 +2589,4 @@ namespace RhinoAIBridge
         }
     }
 }
+
