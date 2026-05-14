@@ -1,4 +1,260 @@
-﻿# RhinoAIBridge v4.5 Ã¢â‚¬â€ MCP Server
+﻿
+
+# =============================================================================
+# DESIGN MEMORY TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def set_design_brief(brief: str) -> str:
+    """Store the project design brief inside the Rhino file (.3dm UserData).
+
+    Call this at the start of any significant design session. The brief persists
+    in the .3dm file and survives save/reload. Include: building type, program,
+    key constraints, structural approach, client requirements.
+    """
+    return json.dumps(await _exec_simple("set_design_brief", {"brief": brief}))
+
+
+@mcp.tool()
+async def get_design_brief() -> str:
+    """Retrieve the project design brief and global design rules stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_design_brief", {}))
+
+
+@mcp.tool()
+async def tag_object(ids: list[str], tags: dict) -> str:
+    """Write metadata tags to one or more Rhino objects (stored in UserDictionary, persists in .3dm).
+
+    Useful tag keys:
+      ai_group    -- logical group name (e.g. 'tower_core_level_3')
+      ai_rule     -- regeneration rule (e.g. 'concrete 300mm, 8.4m bay')
+      ai_label    -- human-readable label
+      ai_relations -- JSON string: {"children": ["id1", "id2"], "parent": "id0"}
+    """
+    return json.dumps(await _exec_simple("tag_object", {"ids": ids, "tags": tags}))
+
+
+@mcp.tool()
+async def get_provenance(id: str) -> str:
+    """Get the full creation context (provenance) for a Rhino object.
+
+    Returns: which tool created it, with what parameters, in which session.
+    Answers: 'why does this object exist?' and 'how was it created?'
+    All AI-created objects are auto-tagged at creation time.
+    """
+    return json.dumps(await _exec_simple("get_provenance", {"id": id}))
+
+
+@mcp.tool()
+async def search_memory(query: str) -> str:
+    """Search the design memory for objects, rules, groups, and sessions matching a keyword.
+
+    Searches across: design brief, session logs, named groups, and all object tags.
+    Returns matching results with source and context (max 50 hits).
+    Example queries: 'tower core', 'concrete 300mm', 'facade A', 'level 3 columns'.
+    """
+    return json.dumps(await _exec_simple("search_memory", {"query": query}))
+
+
+@mcp.tool()
+async def get_related_objects(id: str, relation: str = "") -> str:
+    """Get objects related to a given object via stored ai_relations tags.
+
+    relation: 'parent', 'children', 'mirrors', 'group', or '' for all relations.
+    Example: get all windows that belong to a specific facade wall.
+    """
+    return json.dumps(await _exec_simple("get_related_objects", {"id": id, "relation": relation}))
+
+
+@mcp.tool()
+async def name_group(name: str, ids: list[str]) -> str:
+    """Create or update a named group of objects stored in the Rhino file.
+
+    Named groups persist in the .3dm file. Use to label sets of objects:
+    'tower_core', 'north_facade', 'level_3_columns'. Retrieve with get_group.
+    """
+    return json.dumps(await _exec_simple("name_group", {"name": name, "ids": ids}))
+
+
+@mcp.tool()
+async def get_group(name: str) -> str:
+    """Get the object IDs belonging to a named group stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_group", {"name": name}))
+
+
+@mcp.tool()
+async def get_all_groups() -> str:
+    """List all named groups and their member object IDs stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_all_groups", {}))
+
+
+@mcp.tool()
+async def add_design_rule(rule: str) -> str:
+    """Add a global design rule to the project memory (persists in .3dm file).
+
+    Rules guide future generation decisions. Examples:
+      'bay spacing must be 8400mm'
+      'concrete walls 300mm thick'
+      'floor-to-floor height 3500mm'
+      'no windows below 900mm sill height'
+    """
+    return json.dumps(await _exec_simple("add_design_rule", {"rule": rule}))
+
+
+@mcp.tool()
+async def log_session(summary: str) -> str:
+    """Log a summary of the current AI session to the project memory (persists in .3dm).
+
+    Call at the end of a work session with a brief description of what was done.
+    Logs persist in the .3dm file and provide context for future sessions.
+    """
+    return json.dumps(await _exec_simple("log_session", {"summary": summary}))
+
+
+# =============================================================================
+# INCREMENTAL SCENE SYNC TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def get_scene_diff(from_version: int) -> str:
+    """Get what changed in the Rhino scene since a specific version number.
+
+    Returns arrays of added, deleted, and modified object refs.
+    Use at the start of every session to catch up cheaply instead of
+    re-querying the full scene. Get current version from ping or get_tracker_version.
+
+    WHEN TO USE: much faster than get_scene_summary on large models --
+    only returns what changed, not everything.
+    """
+    return json.dumps(await _exec_simple("get_scene_diff", {"from_version": from_version}))
+
+
+@mcp.tool()
+async def get_change_log(limit: int = 50, since_version: int = 0) -> str:
+    """Get the chronological log of recent scene change events.
+
+    Returns change events (added/deleted/modified) with timestamps and version numbers.
+    Useful for understanding the sequence of recent edits or auditing a session.
+    Max limit: 200 events.
+    """
+    return json.dumps(await _exec_simple("get_change_log", {
+        "limit": limit, "since_version": since_version
+    }))
+
+
+@mcp.tool()
+async def get_tracker_version() -> str:
+    """Get the current change tracker version number.
+
+    Workflow: store this version, do work or wait for user edits,
+    then call get_scene_diff(from_version=stored_version) to see what changed.
+    """
+    return json.dumps(await _exec_simple("get_tracker_version", {}))
+
+
+# =============================================================================
+# SEMANTIC SCENE INTELLIGENCE TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def analyze_architecture() -> str:
+    """Run a full semantic analysis of the Rhino scene.
+
+    Classifies all geometry into architectural types: walls, slabs, columns,
+    cores, facade panels, openings, stairs, massing. Detects floor levels by
+    clustering Z-positions of flat geometry. Detects structural grid from
+    column centroid positions.
+
+    Returns: level count, system breakdown (counts + IDs), detected grid spacing,
+    unclassified geometry ratio.
+
+    Result is CACHED against scene_version -- calling twice costs almost nothing
+    if the scene has not changed. Force refresh by modifying the scene.
+    """
+    return json.dumps(await _exec_simple("analyze_architecture", {}))
+
+
+@mcp.tool()
+async def get_building_systems(system: str = "all") -> str:
+    """Get objects grouped by architectural building system.
+
+    system options:
+      'structure'   -- columns, slabs, cores
+      'envelope'    -- walls, facade panels
+      'openings'    -- windows, doors
+      'circulation' -- stairs, ramps
+      'all'         -- everything (default)
+
+    Each object includes: id, level index, layer, bounding box size [dx, dy, dz] in mm.
+    Call analyze_architecture first for an overview, then drill into systems.
+    """
+    return json.dumps(await _exec_simple("get_building_systems", {"system": system}))
+
+
+@mcp.tool()
+async def get_level_summary(level: int = -1) -> str:
+    """Get a summary of one or all detected floor levels in the model.
+
+    level: floor index (0 = ground floor), or -1 for all levels (default).
+    Returns per level: elevation (mm), object count, count by architectural type.
+    Levels are auto-detected by clustering the Z-positions of flat geometry.
+    """
+    params = {"level": level} if level >= 0 else {}
+    return json.dumps(await _exec_simple("get_level_summary", params))
+
+
+@mcp.tool()
+async def detect_design_patterns() -> str:
+    """Detect repeating design patterns in the Rhino model.
+
+    Finds:
+      - Structural grid: dominant X/Y spacing from column centroid positions
+      - Repeated modules: bounding-box sizes that appear 3+ times
+      - Level count and detected floor heights
+
+    Use before adding new elements to understand the existing design logic
+    (bay spacing, grid, typical element sizes) so you can match them.
+    """
+    return json.dumps(await _exec_simple("detect_design_patterns", {}))
+
+
+@mcp.tool()
+async def find_unassigned_geometry(min_volume: float = 0.0) -> str:
+    """Find geometry that couldn't be classified into any architectural system.
+
+    min_volume: minimum bounding box volume in mm^3 to filter tiny objects (default: 0 = all).
+    Returns objects with layer and bounding box size [dx, dy, dz].
+
+    Use to review orphaned geometry, decide what to do with it (tag it,
+    assign to a layer, delete it, or reclassify it).
+    """
+    return json.dumps(await _exec_simple("find_unassigned_geometry", {"min_volume": min_volume}))
+
+
+# =============================================================================
+# SMART BATCHING -- PREVIEW
+# =============================================================================
+
+@mcp.tool()
+async def batch_preview(commands: list[dict]) -> str:
+    """Validate a batch plan without executing any commands (dry run, zero mutations).
+
+    Checks each step:
+      - Is it a known command?
+      - Are  paths (, .object_ids, .object_ids[0]) forward-reference-free?
+      - Are there destructive commands that need extra care?
+      - Which steps involve viewport captures (consider capture_at_end)?
+
+    Returns per-step status (valid/invalid/warning), estimated creates/deletes,
+    and all warnings. Completely safe to call at any time -- does NOT modify Rhino.
+
+    WHEN TO USE: before any complex or destructive batch, especially those with
+    many  chains or boolean operations.
+    """
+    return json.dumps(await _exec_simple("batch_preview", {"commands": commands}))
+
+
+# RhinoAIBridge v4.5 Ã¢â‚¬â€ MCP Server
 # by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
 """Rhino AI Bridge v4.5 Ã¢â‚¬â€ MCP Server.

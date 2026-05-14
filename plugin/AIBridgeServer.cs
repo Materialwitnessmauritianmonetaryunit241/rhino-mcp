@@ -1,4 +1,4 @@
-﻿// RhinoAIBridge v4.5 â€” AIBridgeServer.cs
+// RhinoAIBridge v4.5 â€” AIBridgeServer.cs
 // by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
 using System;
@@ -78,6 +78,18 @@ namespace RhinoAIBridge
                 AIBridgeLogger.Log(LogLevel.ERROR, "Server", "Snapshot registry init failed", error: ex.ToString());
             }
 
+
+            try
+            {
+                if (RhinoApp.InvokeRequired)
+                    RhinoApp.InvokeOnUiThread(new Action(() => ChangeTracker.Initialize()));
+                else
+                    ChangeTracker.Initialize();
+            }
+            catch (Exception ctEx)
+            {
+                AIBridgeLogger.Log(LogLevel.ERROR, "Server", "ChangeTracker init failed", error: ctEx.ToString());
+            }
             try
             {
                 _listener = new TcpListener(IPAddress.Parse("127.0.0.1"), PORT);

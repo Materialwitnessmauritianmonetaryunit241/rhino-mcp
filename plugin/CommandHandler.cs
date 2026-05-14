@@ -1,4 +1,4 @@
-﻿// RhinoAIBridge v4.5 â€” CommandHandler.cs
+// RhinoAIBridge v4.5 â€” CommandHandler.cs
 // by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
 using System;
@@ -2588,6 +2588,167 @@ namespace RhinoAIBridge
             foreach (var kv in stats) j[kv.Key] = JToken.FromObject(kv.Value);
             return j;
         }
+
+        // ===================================================================
+        // DESIGN MEMORY
+        // ===================================================================
+
+        JObject SetDesignBrief(JObject p)
+        {
+            var brief = p["brief"]?.ToString() ?? "";
+            if (string.IsNullOrWhiteSpace(brief)) return Err("brief required");
+            DesignMemory.SetBrief(brief);
+            return new JObject { ["status"] = "ok", ["brief"] = brief };
+        }
+
+        JObject GetDesignBrief(JObject p) =>
+            new JObject { ["status"] = "ok", ["brief"] = DesignMemory.GetBrief(), ["rules"] = DesignMemory.GetRules() };
+
+        JObject TagObjectCmd(JObject p)
+        {
+            var ids  = p["ids"] as JArray ?? (p["id"] != null ? new JArray(p["id"]) : new JArray());
+            var tags = p["tags"] as JObject ?? new JObject();
+            if (ids.Count == 0) return Err("ids required");
+            int tagged = 0;
+            foreach (var idTok in ids)
+            {
+                if (!Guid.TryParse(idTok.ToString(), out var g)) continue;
+                var obj = Doc?.Objects.FindId(g);
+                if (obj == null) continue;
+                var dict = tags.Properties().ToDictionary(x => x.Name, x => x.Value.ToString());
+                DesignMemory.TagObject(obj, dict);
+                tagged++;
+            }
+            return new JObject { ["status"] = "ok", ["tagged"] = tagged };
+        }
+
+        JObject GetProvenance(JObject p)
+        {
+            var id = p["id"]?.ToString();
+            if (string.IsNullOrEmpty(id)) return Err("id required");
+            if (!Guid.TryParse(id, out var g)) return Err("invalid GUID");
+            var obj = Doc?.Objects.FindId(g);
+            if (obj == null) return Err($"Object {id} not found", "OBJECT_NOT_FOUND");
+            return new JObject { ["status"] = "ok", ["id"] = id,
+                ["type"] = obj.ObjectType.ToString(),
+                ["layer"] = Doc.Layers[obj.Attributes.LayerIndex]?.FullPath ?? "",
+                ["provenance"] = DesignMemory.GetObjectTags(obj) };
+        }
+
+        JObject SearchMemory(JObject p)
+        {
+            var query = p["query"]?.ToString() ?? "";
+            if (string.IsNullOrEmpty(query)) return Err("query required");
+            return new JObject { ["status"] = "ok", ["query"] = query,
+                ["results"] = DesignMemory.SearchMemory(query, Doc) };
+        }
+
+        JObject GetRelatedObjects(JObject p)
+        {
+            var id = p["id"]?.ToString();
+            if (string.IsNullOrEmpty(id) || !Guid.TryParse(id, out var g)) return Err("id required (GUID)");
+            var obj = Doc?.Objects.FindId(g);
+            if (obj == null) return Err($"Object {id} not found", "OBJECT_NOT_FOUND");
+            return new JObject { ["status"] = "ok", ["id"] = id,
+                ["related"] = DesignMemory.GetRelatedObjects(obj, p["relation"]?.ToString() ?? "", Doc) };
+        }
+
+        JObject NameGroupCmd(JObject p)
+        {
+            var name = p["name"]?.ToString() ?? p["group"]?.ToString() ?? "";
+            if (string.IsNullOrEmpty(name)) return Err("name required");
+            var ids = (p["ids"] as JArray)?.Select(x => x.ToString()) ?? Array.Empty<string>();
+            DesignMemory.NameGroup(name, ids);
+            return new JObject { ["status"] = "ok", ["group"] = name };
+        }
+
+        JObject GetGroupCmd(JObject p)
+        {
+            var name = p["name"]?.ToString() ?? p["group"]?.ToString() ?? "";
+            if (string.IsNullOrEmpty(name)) return Err("name required");
+            return new JObject { ["status"] = "ok", ["group"] = name, ["ids"] = DesignMemory.GetGroup(name) };
+        }
+
+        JObject GetAllGroupsCmd(JObject p) =>
+            new JObject { ["status"] = "ok", ["groups"] = DesignMemory.GetAllGroups() };
+
+        JObject AddDesignRule(JObject p)
+        {
+            var rule = p["rule"]?.ToString() ?? "";
+            if (string.IsNullOrEmpty(rule)) return Err("rule required");
+            DesignMemory.AddRule(rule);
+            return new JObject { ["status"] = "ok", ["rule"] = rule };
+        }
+
+        JObject GetDesignRules(JObject p) =>
+            new JObject { ["status"] = "ok", ["rules"] = DesignMemory.GetRules() };
+
+        JObject LogSessionCmd(JObject p)
+        {
+            var summary = p["summary"]?.ToString() ?? "";
+            if (string.IsNullOrEmpty(summary)) return Err("summary required");
+            DesignMemory.AddSession(summary);
+            return new JObject { ["status"] = "ok" };
+        }
+
+        // ===================================================================
+        // INCREMENTAL SCENE SYNC
+        // ===================================================================
+
+        JObject GetSceneDiff(JObject p)
+        {
+            int fromVersion = p["from_version"]?.ToObject<int>() ?? 0;
+            var (added, deleted, modified, toVersion) = ChangeTracker.GetDiff(fromVersion);
+            return new JObject { ["status"] = "ok",
+                ["from_version"] = fromVersion, ["to_version"] = toVersion,
+                ["added"] = added, ["deleted"] = deleted, ["modified"] = modified,
+                ["has_changes"] = added.Count + deleted.Count + modified.Count > 0 };
+        }
+
+        JObject GetChangeLogCmd(JObject p)
+        {
+            int limit = Math.Min(p["limit"]?.ToObject<int>() ?? 50, 200);
+            int since = p["since_version"]?.ToObject<int>() ?? 0;
+            return new JObject { ["status"] = "ok",
+                ["current_version"] = ChangeTracker.CurrentVersion,
+                ["events"] = ChangeTracker.GetLog(limit, since) };
+        }
+
+        JObject GetTrackerVersion(JObject p) =>
+            new JObject { ["status"] = "ok", ["version"] = ChangeTracker.CurrentVersion };
+
+        // ===================================================================
+        // SEMANTIC SCENE INTELLIGENCE
+        // ===================================================================
+
+        JObject AnalyzeArchitectureCmd(JObject p) => SemanticClassifier.AnalyzeArchitecture(Doc);
+
+        JObject GetBuildingSystemsCmd(JObject p) =>
+            SemanticClassifier.GetBuildingSystems(Doc, p["system"]?.ToString() ?? "all");
+
+        JObject GetLevelSummaryCmd(JObject p)
+        {
+            int? level = p["level"] != null ? (int?)p["level"].ToObject<int>() : null;
+            return SemanticClassifier.GetLevelSummary(Doc, level);
+        }
+
+        JObject DetectDesignPatternsCmd(JObject p) => SemanticClassifier.DetectDesignPatterns(Doc);
+
+        JObject FindUnassignedCmd(JObject p)
+        {
+            double minVol = p["min_volume"]?.ToObject<double>() ?? 0;
+            return SemanticClassifier.FindUnassigned(Doc, minVol);
+        }
+
+        // ===================================================================
+        // SMART BATCHING -- PREVIEW
+        // ===================================================================
+
+        JObject BatchPreviewCmd(JObject p)
+        {
+            var commands = p["commands"] as JArray;
+            if (commands == null || commands.Count == 0) return Err("commands array required");
+            return BatchPlanner.Preview(commands, _commands);
+        }
     }
 }
-
