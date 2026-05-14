@@ -1,16 +1,16 @@
-# RhinoAIBridge v4.5 — MCP Server
+# RhinoAIBridge v4.5 â€” MCP Server
 # by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
-"""Rhino AI Bridge v4.5 — MCP Server.
+"""Rhino AI Bridge v4.5 â€” MCP Server.
 
 This release combines:
-  Phase 1 — lean responses (dicts → FastMCP → orjson on wire)
-  Phase 2 — scene_version etag surfaced on every response (cache key for the model)
-  Phase 3 — atomic batches + reference resolution ($1.object_ids[0] chaining)
-  Phase 5 — architect intelligence layer (massing, floors, core, facade, schedules)
-  Phase 6 — consolidated 28-tool MCP surface (was 66 in v3)
+  Phase 1 â€” lean responses (dicts â†’ FastMCP â†’ orjson on wire)
+  Phase 2 â€” scene_version etag surfaced on every response (cache key for the model)
+  Phase 3 â€” atomic batches + reference resolution ($1.object_ids[0] chaining)
+  Phase 5 â€” architect intelligence layer (massing, floors, core, facade, schedules)
+  Phase 6 â€” consolidated 28-tool MCP surface (was 66 in v3)
 
-Phase 4 (multiplexed protocol) and Phase 7 (System.Text.Json) intentionally deferred —
+Phase 4 (multiplexed protocol) and Phase 7 (System.Text.Json) intentionally deferred â€”
 both buy less than the cache + tool-surface work, and both have correctness pitfalls
 we'd rather defer than ship hastily.
 
@@ -39,7 +39,7 @@ logger = logging.getLogger("rhino_ai_bridge")
 mcp = FastMCP("rhino_ai_bridge")
 
 
-# ── Helpers ───────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 async def _exec(command: str, params: dict[str, Any]) -> dict:
     conn = await get_connection()
     resp = await conn.send_command(command, params)
@@ -74,7 +74,7 @@ async def _exec_batch(
     atomic: bool = True,
     stop_on_error: Optional[bool] = None,
 ) -> dict:
-    """Phase 3 — execute a batch with optional atomic semantics."""
+    """Phase 3 â€” execute a batch with optional atomic semantics."""
     try:
         conn = await get_connection()
         resp = await conn.send_batch(commands, atomic=atomic, stop_on_error=stop_on_error)
@@ -96,7 +96,7 @@ WI = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "
 DE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}
 
 
-# ── Input Models ──────────────────────────────────────────────────
+# â”€â”€ Input Models â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 class Empty(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -180,17 +180,17 @@ class ModifyObjectInput(BaseModel):
 class BatchSubCommand(BaseModel):
     """One sub-command inside a batch. The plugin routes on `type`; `params` is passed verbatim.
 
-    `type` must be one of the plugin command names — same names as the MCP tools
+    `type` must be one of the plugin command names â€” same names as the MCP tools
     (create_object, derive_floors_from_mass, create_core, transform_objects, modify_object,
     delete_objects, query_scene, setup_arch_layers, batch_layer_visibility, execute_script,
-    undo, …) plus any legacy commands listed in rhino://capabilities.
+    undo, â€¦) plus any legacy commands listed in rhino://capabilities.
 
     `params` is the argument dict exactly as you'd pass to the corresponding standalone tool,
     EXCEPT that any string value may start with a `$N` reference to resolve to a prior result:
-        "$1"                → whole result dict of op 1
-        "$1.object_ids[0]"  → first GUID from op 1
-        "$2.mass_id"        → mass_id field from op 2
-        "$3.bounding_box.min" → nested path
+        "$1"                â†’ whole result dict of op 1
+        "$1.object_ids[0]"  â†’ first GUID from op 1
+        "$2.mass_id"        â†’ mass_id field from op 2
+        "$3.bounding_box.min" â†’ nested path
     """
     model_config = ConfigDict(extra="forbid")
     type: str = Field(
@@ -207,7 +207,7 @@ class BatchSubCommand(BaseModel):
     params: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Arguments for the command — same shape as calling the tool standalone. "
+            "Arguments for the command â€” same shape as calling the tool standalone. "
             "Any string value may be a $N reference to a prior op's result, e.g. "
             "'$1.object_ids[0]' or '$2.mass_id'."
         ),
@@ -337,7 +337,7 @@ class CaptureInput(BaseModel):
     max_bytes: int = 800000
     format: str = "auto"   # "auto" | "png" | "jpeg"
     quality: int = Field(default=80, ge=1, le=100)
-    restore_state: bool = Field(default=True, description="Restore viewport camera and display mode after capture. Default True — the AI can inspect the model from any angle without disrupting the user's current view.")
+    restore_state: bool = Field(default=True, description="Restore viewport camera and display mode after capture. Default True â€” the AI can inspect the model from any angle without disrupting the user's current view.")
     view: Optional[str] = Field(default=None, description="Temporarily switch to this named view before capturing (Top, Front, Right, Perspective, etc.). Restored if restore_state=True.")
     display_mode: Optional[str] = Field(default=None, description="Temporarily switch to this display mode before capturing (Wireframe, Shaded, Rendered, Arctic, etc.). Restored if restore_state=True.")
 
@@ -398,7 +398,7 @@ class SetCameraInput(BaseModel):
     target: Optional[list[float]] = Field(None, description="Camera target [x, y, z]. Omit when using box_min/box_max.")
     lens_length: Optional[float] = Field(None, description="Lens focal length in mm. 50=normal, 24=wide, 135=tele.")
     projection: Optional[str] = Field(None, description="'perspective' | 'parallel'. Defaults to current.")
-    box_min: Optional[list[float]] = Field(None, description="Bounding box min [x,y,z] to zoom-frame. Provide with box_max — camera distance auto-computed.")
+    box_min: Optional[list[float]] = Field(None, description="Bounding box min [x,y,z] to zoom-frame. Provide with box_max â€” camera distance auto-computed.")
     box_max: Optional[list[float]] = Field(None, description="Bounding box max [x,y,z] to zoom-frame. Provide with box_min.")
 
 
@@ -423,14 +423,14 @@ class RunCommandInput(BaseModel):
     echo: bool = Field(default=False, description="Echo the command to Rhino's command line. Default False (silent).")
 
 
-# ── Capabilities Resource ─────────────────────────────────────────
+# â”€â”€ Capabilities Resource â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Long-tail commands (still callable inside `batch`) and discoverable workflows.
 CAPABILITIES: dict[str, Any] = {
     "version": "4.5.0",
     "phase": "1+2+3+5+6",
     "deferred_phases": {
-        "phase_4": "multiplexed protocol — deferred (UI-thread serialization makes the gain marginal)",
-        "phase_7": "System.Text.Json source generators — deferred (low ROI vs. wider risk)",
+        "phase_4": "multiplexed protocol â€” deferred (UI-thread serialization makes the gain marginal)",
+        "phase_7": "System.Text.Json source generators â€” deferred (low ROI vs. wider risk)",
     },
     "tool_surface": "consolidated",
     "preferred_tools": [
@@ -511,7 +511,7 @@ CAPABILITIES: dict[str, Any] = {
 }
 
 
-# ── Resource ──────────────────────────────────────────────────────
+# â”€â”€ Resource â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 @mcp.resource("rhino://capabilities")
 def capabilities() -> str:
     """Long-tail capabilities, examples, legacy command names, preferred workflows.
@@ -536,13 +536,13 @@ async def arch_defaults_resource() -> str:
     }).decode("utf-8")
 
 
-# ── Tools ─────────────────────────────────────────────────────────
+# â”€â”€ Tools â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="ping", annotations=RO)
 async def ping(params: Empty) -> dict:
     """Verify Rhino is reachable. Returns build hash, doc info, units, and current scene_version.
 
-    Cheap (sub-ms on server). Useful at conversation start, and as an etag check —
+    Cheap (sub-ms on server). Useful at conversation start, and as an etag check â€”
     if scene_version matches what you saw last time, the scene is unchanged and you
     can skip re-querying."""
     try:
@@ -556,14 +556,14 @@ async def ping(params: Empty) -> dict:
 
 @mcp.tool(name="query_scene", annotations=RO)
 async def query_scene(params: QuerySceneInput) -> dict:
-    """Universal scene query — replaces get_context, get_scene_summary, get_objects, list_layers.
+    """Universal scene query â€” replaces get_context, get_scene_summary, get_objects, list_layers.
 
     scope='summary' for full scene summary (counts, bbox, layers).
     scope='layers' for layer list with counts.
     scope='objects' (default) with filter={layer, type, name_pattern} and detail=ids/summary/full.
 
     Phase 2: served from the snapshot cache, so all branches are O(1) or O(M) rather than O(N).
-    Returns scene_version — use it as an etag across calls."""
+    Returns scene_version â€” use it as an etag across calls."""
     return await _exec_simple("query_scene", params.model_dump(exclude_none=True))
 
 
@@ -575,7 +575,7 @@ async def create_object(params: CreateObjectInput) -> dict:
     massing, core). Primitives (box, sphere, cylinder, etc.) go through the generic path.
 
     Returns object_ids and bounding_box. Pass measure=true to also compute area/volume
-    (off by default — saves a Brep integration on every floor of a 30-floor stack).
+    (off by default â€” saves a Brep integration on every floor of a 30-floor stack).
 
     Examples:
     - type='massing', params={footprint:[[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]], levels:4, level_height:3600}
@@ -588,7 +588,7 @@ async def create_object(params: CreateObjectInput) -> dict:
 
 @mcp.tool(name="transform_objects", annotations=WR)
 async def transform_objects(params: TransformObjectsInput) -> dict:
-    """Universal transform tool — replaces move/rotate/scale/mirror/array.
+    """Universal transform tool â€” replaces move/rotate/scale/mirror/array.
 
     For one transform, use shorthand fields. For chained transforms, use operations[]:
     each op's output object_ids feed the next, so you can move-then-array in a single call.
@@ -605,51 +605,51 @@ async def modify_object(params: ModifyObjectInput) -> dict:
 
 @mcp.tool(name="batch", annotations=WR)
 async def batch(params: BatchCommandInput) -> dict:
-    """Run many Rhino commands in one round-trip. Phase 3 — supports atomic rollback and references.
+    """Run many Rhino commands in one round-trip. Supports atomic rollback and $N references.
 
-    Each sub-command in `commands` must be: {"type": "<command_name>", "params": {...}}
-    where `type` is the plugin command name (same as the MCP tool names).
+    WHEN TO USE BATCH (already know all params upfront):
+    - Creating many independent objects (walls, slabs, columns in bulk)
+    - Layer setup, material assignment, bulk visibility changes
+    - Linked ops via $N reference (e.g. massing -> derive_floors in one shot)
 
-    Example — build a massing and derive floors atomically in one call:
-        commands=[
-          {"type": "create_object",
-           "params": {"type": "massing",
-                      "params": {"footprint": [[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]],
-                                 "levels": 4, "level_height": 3600}}},
-          {"type": "derive_floors_from_mass",
-           "params": {"mass_id": "$1.mass_id", "level_heights": [4200, 3600, 3600, 3600]}}
-        ]
+    WHEN TO USE INDIVIDUAL TOOL CALLS INSTEAD (step-by-step is more accurate):
+    - You need to READ a result before deciding the next step (inspect IDs, bbox, count)
+    - Complex boolean/modification ops where geometry must be verified first
+    - Placing openings referencing wall IDs returned from a previous create
+    - Any workflow needing capture_viewport or validate_objects between steps
+    - Debugging: one tool at a time isolates failures
+    - Any op where a wrong param would be hard to undo
 
-    With atomic=true, the entire batch is wrapped in one Rhino undo record. If any sub-op
-    fails, the whole batch rolls back — no partial state.
+    RULE: if the next command depends on INSPECTING this command's output (not just
+    chaining IDs via $N), use individual calls. If you already know all params, batch.
 
-    References: any string value starting with "$N" resolves to the Nth (1-indexed) prior
-    result, with optional dot/bracket path:
-        $1                    → whole result dict of op 1
-        $1.object_ids[0]      → first GUID created by op 1
-        $2.mass_id            → mass_id field from op 2
-        $3.bounding_box.min   → nested path
+    Each sub-command: {"type": "<command_name>", "params": {...}}
 
-    This is how 'build a 4-story office with core and windows' becomes one call instead of 50.
+    References: "$N" resolves to the Nth (1-indexed) prior result:
+        $1.object_ids[0]      -> first GUID created by op 1
+        $2.mass_id            -> mass_id field from op 2
+
+    With atomic=True: whole batch rolls back on any failure (one undo record).
+    With atomic=False: each sub-op commits independently — use for large bulk builds.
     Legacy commands (any name from rhino://capabilities) are callable inside batch."""
     raw_commands = [c.model_dump() for c in params.commands]
     return await _exec_batch(raw_commands, atomic=params.atomic, stop_on_error=params.stop_on_error)
 
 
-# ── Architect intelligence layer ─────────────────────────────────
+# â”€â”€ Architect intelligence layer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="derive_floors_from_mass", annotations=WR)
 async def derive_floors_from_mass(params: DeriveFloorsFromMassInput) -> dict:
     """Section a massing solid at floor heights and extrude each section into a slab.
 
     Variable level_heights[] for non-uniform floor heights (e.g. taller ground floor).
-    Pair with create_object(type='massing') in a batch — chain via $1.mass_id."""
+    Pair with create_object(type='massing') in a batch â€” chain via $1.mass_id."""
     return await _exec_simple("derive_floors_from_mass", params.model_dump(exclude_none=True))
 
 
 @mcp.tool(name="create_core", annotations=WR)
 async def create_core(params: CreateCoreInput) -> dict:
-    """Create a building core as a unit — perimeter walls plus lift, stair, and shaft modules.
+    """Create a building core as a unit â€” perimeter walls plus lift, stair, and shaft modules.
 
     Optional punch_through[] subtracts the core modules from listed massing solids,
     carving the actual voids in your floor stack."""
@@ -679,7 +679,7 @@ async def report_areas(params: ReportAreasInput) -> dict:
     return await _exec_simple("report_areas", params.model_dump())
 
 
-# ── Layers ─────────────────────────────────────────────────────────
+# â”€â”€ Layers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="create_layer", annotations=WI)
 async def create_layer(params: LayerInput) -> dict:
@@ -699,7 +699,7 @@ async def batch_layer_visibility(params: BatchLayerVisInput) -> dict:
     return await _exec_simple("batch_layer_visibility", params.model_dump(exclude_none=True))
 
 
-# ── Analysis ───────────────────────────────────────────────────────
+# â”€â”€ Analysis â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="measure_object", annotations=RO)
 async def measure_object(params: ObjectIdInput) -> dict:
@@ -725,13 +725,13 @@ async def validate_objects(params: ValidateInput) -> dict:
     return await _exec_simple("validate_objects", params.model_dump())
 
 
-# ── Viewport ───────────────────────────────────────────────────────
+# â”€â”€ Viewport â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="capture_viewport", annotations=RO)
 async def capture_viewport(params: CaptureInput) -> dict:
     """Capture the active viewport as JPEG (default for shaded) or PNG (default for wireframe).
 
-    Phase 1 — no disk round-trip. format='auto' picks based on display mode.
+    Phase 1 â€” no disk round-trip. format='auto' picks based on display mode.
     restore_state=True (default) saves and restores the viewport camera + display mode after
     capture, so inspecting the model from any angle never disrupts the user's current view.
     Pass view= and/or display_mode= to temporarily switch before capturing."""
@@ -762,7 +762,7 @@ async def set_camera(params: SetCameraInput) -> dict:
 
     Two modes:
     1. Explicit: supply location + target (+ optional lens_length, projection).
-    2. Bbox framing: supply box_min + box_max — the plugin auto-computes a camera distance
+    2. Bbox framing: supply box_min + box_max â€” the plugin auto-computes a camera distance
        that fits the bounding box in the viewport.
 
     Examples:
@@ -780,11 +780,11 @@ async def get_rhino_commands(params: GetRhinoCommandsInput) -> dict:
     return await _exec_simple("get_rhino_commands", params.model_dump())
 
 
-# ── Geometry ops ─────────────────────────────────────────────────
+# â”€â”€ Geometry ops â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="get_cross_section", annotations=WR)
 async def get_cross_section(params: CrossSectionInput) -> dict:
-    """Cut a solid at a Z height and return section curves — useful for plan views."""
+    """Cut a solid at a Z height and return section curves â€” useful for plan views."""
     return await _exec_simple("get_cross_section", params.model_dump(exclude_none=True))
 
 
@@ -799,11 +799,11 @@ async def delete_objects(params: DeleteInput) -> dict:
     """Delete objects by GUID or selector string: 'all', 'by_layer:Layer', 'by_name:Pattern', 'selected'."""
     return await _exec_simple("delete_objects", params.model_dump())
 
-# ── Escape hatches ────────────────────────────────────────────────
+# â”€â”€ Escape hatches â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="execute_script", annotations=WR)
 async def execute_script(params: ScriptInput) -> dict:
-    """Run arbitrary Python 3 inside Rhino. Powerful escape hatch — prefer structured tools.
+    """Run arbitrary Python 3 inside Rhino. Powerful escape hatch â€” prefer structured tools.
 
     Auto-imported preamble: rhinoscriptsyntax as rs, scriptcontext as sc, Rhino, System.
     Use undo_name to wrap in an undo record."""
@@ -822,11 +822,11 @@ async def get_log(params: LogInput) -> dict:
     return await _exec_simple("get_log", params.model_dump())
 
 
-# ── Materials ─────────────────────────────────────────────────────
+# â”€â”€ Materials â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="set_layer_material", annotations=WI)
 async def set_layer_material(params: LayerMaterialInput) -> dict:
-    """Set PBR material properties on a layer — color, roughness, metallic, opacity, emission.
+    """Set PBR material properties on a layer â€” color, roughness, metallic, opacity, emission.
 
     Updates both the layer display color and the render material (Rendered/Arctic/Raytraced).
 
@@ -837,14 +837,14 @@ async def set_layer_material(params: LayerMaterialInput) -> dict:
     return await _exec_simple("set_layer_material", params.model_dump(exclude_none=True))
 
 
-# ── Native commands ───────────────────────────────────────────────
+# â”€â”€ Native commands â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @mcp.tool(name="run_command", annotations=WR)
 async def run_command(params: RunCommandInput) -> dict:
     """Execute any Rhino command string via RhinoApp.RunScript.
 
     Escape hatch for commands not covered by structured tools. Tracks newly created objects.
-    Prefer structured tools when available — run_command has no rollback guarantee.
+    Prefer structured tools when available â€” run_command has no rollback guarantee.
 
     Examples:
         run_command(command="_Contour _SelAll _Enter 0,0,0 0,0,1 3000")
@@ -853,7 +853,7 @@ async def run_command(params: RunCommandInput) -> dict:
     return await _exec_simple("run_command", params.model_dump())
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# â”€â”€ Entry point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def main():
     """Entry point for the rhino-architect MCP server (called by pyproject.toml script)."""
