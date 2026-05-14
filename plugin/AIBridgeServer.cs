@@ -26,7 +26,7 @@ namespace RhinoAIBridge
     public class AIBridgeServer
     {
         private const int PORT = 9544;
-        public const string PROTOCOL_VERSION = "4.0";
+        public const string PROTOCOL_VERSION = "4.5";
 
         private TcpListener _listener;
         private CancellationTokenSource _cts;
@@ -302,6 +302,7 @@ namespace RhinoAIBridge
                     "set_camera",
                 },
                 ["capabilities_resource"] = "rhino://capabilities",
+                ["safe_mode"] = false,
             };
         }
 

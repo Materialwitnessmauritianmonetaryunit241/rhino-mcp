@@ -222,7 +222,7 @@ namespace RhinoAIBridge
                     catch (Exception e)
                     {
                         AIBridgeLogger.Log(LogLevel.ERROR, "Batch", "Atomic rollback failed", error: e.ToString());
-                        return Err("Atomic batch failed and rollback failed", new JObject
+                        return Err("Atomic batch failed and rollback failed", "BATCH_ROLLED_BACK", new JObject
                         {
                             ["rollback_error"] = e.Message,
                             ["failed_index"] = firstFailed,
@@ -233,6 +233,7 @@ namespace RhinoAIBridge
                 return new JObject
                 {
                     ["status"] = "error",
+                    ["error_code"] = "BATCH_ROLLED_BACK",
                     ["message"] = atomic ? $"Atomic batch failed at op {firstFailed + 1}; changes rolled back" : $"Batch failed at op {firstFailed + 1}",
                     ["failed_index"] = firstFailed,
                     ["failed_indices"] = failed,
@@ -381,9 +382,9 @@ namespace RhinoAIBridge
             return j;
         }
 
-        static JObject Err(string m, JObject diag = null)
+        static JObject Err(string m, string code = "COMMAND_FAILED", JObject diag = null)
         {
-            var j = new JObject { ["status"] = "error", ["message"] = m };
+            var j = new JObject { ["status"] = "error", ["error_code"] = code, ["message"] = m };
             if (diag != null) j["diagnostics"] = diag;
             return j;
         }
@@ -731,7 +732,7 @@ namespace RhinoAIBridge
             pts = pts.Select(pt => new Point3d(pt.X, pt.Y, z)).ToList();
             if (pts.First().DistanceTo(pts.Last()) > 0.01) pts.Add(pts[0]);
             var b = ExtrudeCC(new Polyline(pts).ToNurbsCurve(), new Vector3d(0, 0, -th));
-            if (b == null) return Err("Slab failed");
+            if (b == null) return Err("Slab failed", "INVALID_GEOMETRY");
             var gid = Doc.Objects.AddBrep(b, MkAttr(p));
             RedrawScope.Mark();
             return CrResult(gid, p["layer"]?.ToString() ?? "Slab", WantMeasure(p));
@@ -750,8 +751,8 @@ namespace RhinoAIBridge
         JObject CreateOpening(JObject p)
         {
             var wo = Doc.Objects.FindId(new Guid(p["wall_id"].ToString()));
-            if (wo == null) return Err("Wall not found");
-            var wb = GetBrep(wo); if (wb == null) return Err("Not solid");
+            if (wo == null) return Err("Wall not found", "OBJECT_NOT_FOUND");
+            var wb = GetBrep(wo); if (wb == null) return Err("Not solid", "INVALID_GEOMETRY");
             double pos = p["position"].ToObject<double>(), w = p["width"]?.ToObject<double>() ?? 900, h = p["height"]?.ToObject<double>() ?? 2100, sill = p["sill_height"]?.ToObject<double>() ?? 0;
             var bb = wb.GetBoundingBox(true); var sz = bb.Max - bb.Min;
             var wd = sz.X > sz.Y ? Vector3d.XAxis : Vector3d.YAxis;
@@ -763,7 +764,7 @@ namespace RhinoAIBridge
             var ht = wn * (wt * 0.6);
             var ob = Brep.CreateFromBox(new BoundingBox(oc - hw - ht, oc + hw + ht + new Vector3d(0, 0, h)));
             var res = Brep.CreateBooleanDifference(wb, ob, Tol);
-            if (res == null || res.Length == 0) return Err("Boolean failed");
+            if (res == null || res.Length == 0) return Err("Boolean failed", "INVALID_GEOMETRY");
             Doc.Objects.Delete(wo, true);
             var ids = new JArray();
             foreach (var r in res) ids.Add(Doc.Objects.AddBrep(r, wo.Attributes).ToString());
@@ -778,7 +779,7 @@ namespace RhinoAIBridge
             pts = pts.Select(pt => new Point3d(pt.X, pt.Y, z)).ToList();
             if (pts.First().DistanceTo(pts.Last()) > 0.01) pts.Add(pts[0]);
             var b = ExtrudeCC(new Polyline(pts).ToNurbsCurve(), new Vector3d(0, 0, th));
-            if (b == null) return Err("Roof failed");
+            if (b == null) return Err("Roof failed", "INVALID_GEOMETRY");
             var gid = Doc.Objects.AddBrep(b, MkAttr(p));
             RedrawScope.Mark();
             return CrResult(gid, p["layer"]?.ToString() ?? "Roof", WantMeasure(p));
@@ -1219,7 +1220,7 @@ namespace RhinoAIBridge
                     default: return Err($"Unknown transform operation: {kind}");
                 }
                 opResults.Add(r);
-                if (r["status"]?.ToString() != "ok") return Err($"Transform operation failed: {kind}", new JObject { ["operation"] = kind, ["result"] = r });
+                if (r["status"]?.ToString() != "ok") return Err($"Transform operation failed: {kind}", "COMMAND_FAILED", new JObject { ["operation"] = kind, ["result"] = r });
                 current = (r["object_ids"] as JArray)?.Select(x => x.ToString()).ToList() ?? current;
                 copy = false; // copy only applies to the first op in a chain
             }
@@ -1657,7 +1658,7 @@ namespace RhinoAIBridge
                 _ => null
             };
             if (res == null || res.Length == 0)
-                return Err($"Boolean {op} failed", new JObject
+                return Err($"Boolean {op} failed", "INVALID_GEOMETRY", new JObject
                 {
                     ["a_bbox"] = BB(bA.GetBoundingBox(true)),
                     ["b_bbox"] = BB(bB.GetBoundingBox(true)),
@@ -2181,7 +2182,7 @@ namespace RhinoAIBridge
         {
             string cmd = p["command"]?.ToString() ?? "";
             if (string.IsNullOrEmpty(cmd)) return Err("command required");
-            if (Doc == null) return Err("No active document");
+            if (Doc == null) return Err("No active document", "RHINO_NOT_RUNNING");
             bool echo = p["echo"]?.ToObject<bool>() ?? false;
 
             var before = new HashSet<string>(AllObjs().Select(o => o.Id.ToString()));

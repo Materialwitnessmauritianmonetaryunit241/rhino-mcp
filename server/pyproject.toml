@@ -1,4 +1,4 @@
-[project]
+﻿[project]
 name = "rhino-architect"
 version = "4.5.0"
 description = "AI Bridge MCP server for Rhino 8 — v4.5 (Phase 1+2+3+5+6)"
@@ -15,6 +15,7 @@ dependencies = [
 [project.scripts]
 rhino-architect = "rhino_architect.server:main"
 rhino-chat      = "chat:main"          # uv run rhino-chat  (or: uv run python chat.py)
+rhino-architect-doctor = "rhino_architect.doctor:main"
 
 [build-system]
 requires = ["hatchling"]
