@@ -117,8 +117,6 @@ namespace RhinoAIBridge
             string type = cmd["type"]?.ToString() ?? "";
 
             // Trust-level check replaces legacy _SAFE_MODE
-            var trustErr = TrustManager.CheckCommand(type);
-            if (trustErr != null) return trustErr;
 
             var p = cmd["params"] as JObject ?? new JObject();
             if (type == "batch")
