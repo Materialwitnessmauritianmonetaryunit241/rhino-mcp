@@ -1395,6 +1395,145 @@ async def calibrate_scale(point1_x: float, point1_y: float, point1_z: float, poi
     })
 
 
+# =============================================================================
+# PDF / FILE TRACING TOOLS  (v4.7)
+# =============================================================================
+
+@mcp.tool()
+async def get_pdf_info(pdf_path: str) -> str:
+    """Inspect a PDF file: page count, page sizes in mm, vector/text content flag.
+
+    Call this before trace_pdf to choose the right page number and confirm
+    the file is a vector drawing (not a scanned raster).
+
+    Args:
+        pdf_path: Absolute path to the PDF file.
+    """
+    try:
+        from rhino_architect.pdf_tracer import get_pdf_info as _info
+        return _info(pdf_path)
+    except ImportError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def preview_pdf_page(pdf_path: str, page_number: int = 0) -> str:
+    """Render a PDF page as a base64 PNG thumbnail for previewing before tracing.
+
+    Args:
+        pdf_path: Absolute path to the PDF file.
+        page_number: 0-indexed page number (default 0).
+    """
+    try:
+        from rhino_architect.pdf_tracer import render_page_preview
+        b64 = render_page_preview(pdf_path, page_number)
+        if b64:
+            return {"status": "ok", "page": page_number, "image_base64": b64,
+                    "note": "Render the image to confirm the page looks correct before tracing."}
+        return {"error": "Could not render page"}
+    except ImportError as e:
+        return {"error": str(e)}
+
+
+@mcp.tool()
+async def trace_pdf(
+    pdf_path: str,
+    page_number: int = 0,
+    dpi: int = 300,
+    model_unit: str = "mm",
+    confidence_threshold: float = 0.65,
+    layer_prefix: str = "Traced",
+    z_elevation: float = 0.0,
+    merge_tolerance_px: float = 5.0,
+    min_line_length_px: float = 10.0,
+) -> str:
+    """Trace a PDF drawing page and import the geometry into Rhino as curves, arcs, polylines and text.
+
+    Two-step process handled automatically:
+      1. Python CV pipeline (PyMuPDF + OpenCV) extracts geometry from the PDF.
+      2. C# TracingManager creates Rhino objects on organised layers.
+
+    Low-confidence detections go to a '{layer_prefix}::REVIEW' layer (shown in red)
+    so you can inspect and accept/reject them manually.
+
+    Requirements: pip install pymupdf opencv-python numpy
+
+    Args:
+        pdf_path: Absolute path to the PDF file.
+        page_number: 0-indexed page number (default 0).
+        dpi: Render resolution. 300 is good for most drawings; use 600 for fine detail.
+        model_unit: Target model unit ("mm", "cm", "m", "ft", "in"). Must match the Rhino document.
+        confidence_threshold: Elements below this confidence go to the REVIEW layer (0.0–1.0).
+        layer_prefix: Prefix for created layers (default "Traced").
+        z_elevation: Z height at which all geometry is placed.
+        merge_tolerance_px: Distance in pixels within which collinear segments are merged.
+        min_line_length_px: Ignore detected lines shorter than this (pixels).
+    """
+    try:
+        from rhino_architect.pdf_tracer import trace_pdf as _trace
+    except ImportError as e:
+        return json.dumps({"error": f"pdf_tracer import failed: {e}. Run: pip install pymupdf opencv-python numpy"})
+
+    # Step 1: Extract geometry in Python
+    trace_result = _trace(
+        pdf_path=pdf_path,
+        page_number=page_number,
+        dpi=dpi,
+        model_unit=model_unit,
+        confidence_threshold=confidence_threshold,
+        merge_tolerance_px=merge_tolerance_px,
+        min_line_length_px=min_line_length_px,
+    )
+
+    if "error" in trace_result and not trace_result.get("elements"):
+        return json.dumps(trace_result)
+
+    meta = trace_result.get("metadata", {})
+    elements = trace_result.get("elements", [])
+
+    if not elements:
+        return json.dumps({"status": "ok", "message": "No geometry detected in this page.",
+                           "metadata": meta})
+
+    # Step 2: Send to Rhino C# to create objects
+    payload = {
+        "elements": elements,
+        "layer_prefix": layer_prefix,
+        "confidence_threshold": confidence_threshold,
+        "z_elevation": z_elevation,
+        "source_file": meta.get("source_file", os.path.basename(pdf_path)),
+        "page_number": page_number,
+    }
+    rhino_result = await _exec_simple("apply_traced_elements", payload)
+
+    return json.dumps({
+        "status": "ok",
+        "trace_metadata": meta,
+        "rhino_result": rhino_result,
+        "note": f"Elements on REVIEW layer need manual inspection. Open layer panel to check '{layer_prefix}::REVIEW'.",
+    })
+
+
+@mcp.tool()
+async def clear_trace_layers(layer_prefix: str = "Traced") -> str:
+    """Delete all objects and layers created by a previous trace_pdf call.
+
+    Args:
+        layer_prefix: The prefix used when the layers were created (default "Traced").
+    """
+    return json.dumps(await _exec_simple("clear_trace_layers", {"layer_prefix": layer_prefix}))
+
+
+@mcp.tool()
+async def get_trace_layers(layer_prefix: str = "Traced") -> str:
+    """List all trace layers and their object counts.
+
+    Args:
+        layer_prefix: Layer prefix to search for (default "Traced").
+    """
+    return json.dumps(await _exec_simple("get_trace_layers", {"layer_prefix": layer_prefix}))
+
+
 def main():
     """Entry point for the rhino-architect MCP server (called by pyproject.toml script)."""
     mcp.run()

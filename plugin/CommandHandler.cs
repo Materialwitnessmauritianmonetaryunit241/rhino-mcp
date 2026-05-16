@@ -124,6 +124,8 @@ namespace RhinoAIBridge
                 ["list_materials"] = W(ListMaterialsCmd), ["get_material"] = W(GetMaterialCmd),
                 // v4.7: File Tracing
                 ["import_dwg"] = W(ImportDwgCmd), ["calibrate_scale"] = W(CalibrateScaleCmd),
+                ["apply_traced_elements"] = W(ApplyTracedElementsCmd),
+                ["get_trace_layers"] = W(GetTraceLayersCmd), ["clear_trace_layers"] = W(ClearTraceLayersCmd),
             };
         }
 
@@ -2821,6 +2823,10 @@ namespace RhinoAIBridge
         JObject GetMaterialCmd(JObject p) => MaterialManager.GetMaterial(p, Doc);
 
         // ── v4.7 File Tracing ────────────────────────────────────────────
+        JObject ApplyTracedElementsCmd(JObject p) => TracingManager.ApplyTracedElements(p, Doc);
+        JObject GetTraceLayersCmd(JObject p) => TracingManager.GetTraceLayers(p, Doc);
+        JObject ClearTraceLayersCmd(JObject p) => TracingManager.ClearTraceLayers(p, Doc);
+
         JObject ImportDwgCmd(JObject p)
         {
             // Import DWG/DXF natively via Rhino command, then post-process
