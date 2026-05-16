@@ -109,6 +109,21 @@ namespace RhinoAIBridge
                 // Script & Undo & Logs
                 ["execute_script"] = W(ExecuteScript), ["undo"] = W(DoUndo), ["redo"] = W(DoRedo),
                 ["get_log"] = W(GetLog), ["get_log_stats"] = W(GetLogStats),
+                // v4.7: Sections, Elevations, Plans
+                ["create_section"] = W(CreateSectionCmd), ["create_elevation"] = W(CreateElevationCmd),
+                ["cut_section"] = W(CutSectionCmd), ["align_view_to_section"] = W(AlignViewToSectionCmd),
+                ["create_plan"] = W(CreatePlanCmd), ["create_all_plans"] = W(CreateAllPlansCmd),
+                ["list_sections"] = W(ListSectionsCmd), ["update_section"] = W(UpdateSectionCmd),
+                ["remove_section"] = W(RemoveSectionCmd),
+                // v4.7: Illustration & Display Modes
+                ["create_display_mode"] = W(CreateDisplayModeCmd), ["apply_display_mode"] = W(ApplyDisplayModeCmd),
+                ["list_display_modes"] = W(ListDisplayModesCmd), ["adjust_display_mode"] = W(AdjustDisplayModeCmd),
+                ["delete_display_mode"] = W(DeleteDisplayModeCmd), ["capture_illustration"] = W(CaptureIllustrationCmd),
+                // v4.7: Material Intelligence
+                ["apply_downloaded_material"] = W(ApplyDownloadedMaterialCmd), ["edit_material"] = W(EditMaterialCmd),
+                ["list_materials"] = W(ListMaterialsCmd), ["get_material"] = W(GetMaterialCmd),
+                // v4.7: File Tracing
+                ["import_dwg"] = W(ImportDwgCmd), ["calibrate_scale"] = W(CalibrateScaleCmd),
             };
         }
 
@@ -2778,6 +2793,98 @@ namespace RhinoAIBridge
             var commands = p["commands"] as JArray;
             if (commands == null || commands.Count == 0) return Err("commands array required");
             return BatchPlanner.Preview(commands, _commands);
+        }
+
+        // ── v4.7 Sections, Elevations, Plans ────────────────────────────
+        JObject CreateSectionCmd(JObject p) => SectionManager.CreateSection(p, Doc);
+        JObject CreateElevationCmd(JObject p) => SectionManager.CreateElevation(p, Doc);
+        JObject CutSectionCmd(JObject p) => SectionManager.CutSection(p, Doc);
+        JObject AlignViewToSectionCmd(JObject p) => SectionManager.AlignViewToSection(p, Doc);
+        JObject CreatePlanCmd(JObject p) => SectionManager.CreatePlan(p, Doc);
+        JObject CreateAllPlansCmd(JObject p) => SectionManager.CreateAllPlans(p, Doc);
+        JObject ListSectionsCmd(JObject p) => SectionManager.ListSections(p, Doc);
+        JObject UpdateSectionCmd(JObject p) => SectionManager.UpdateSection(p, Doc);
+        JObject RemoveSectionCmd(JObject p) => SectionManager.RemoveSection(p, Doc);
+
+        // ── v4.7 Illustration & Display Modes ───────────────────────────
+        JObject CreateDisplayModeCmd(JObject p) => DisplayModeManager.CreateDisplayMode(p, Doc);
+        JObject ApplyDisplayModeCmd(JObject p) => DisplayModeManager.ApplyDisplayMode(p, Doc);
+        JObject ListDisplayModesCmd(JObject p) => DisplayModeManager.ListDisplayModes(p, Doc);
+        JObject AdjustDisplayModeCmd(JObject p) => DisplayModeManager.AdjustDisplayMode(p, Doc);
+        JObject DeleteDisplayModeCmd(JObject p) => DisplayModeManager.DeleteDisplayMode(p, Doc);
+        JObject CaptureIllustrationCmd(JObject p) => DisplayModeManager.CaptureIllustration(p, Doc);
+
+        // ── v4.7 Material Intelligence ───────────────────────────────────
+        JObject ApplyDownloadedMaterialCmd(JObject p) => MaterialManager.ApplyDownloadedMaterial(p, Doc);
+        JObject EditMaterialCmd(JObject p) => MaterialManager.EditMaterial(p, Doc);
+        JObject ListMaterialsCmd(JObject p) => MaterialManager.ListMaterials(p, Doc);
+        JObject GetMaterialCmd(JObject p) => MaterialManager.GetMaterial(p, Doc);
+
+        // ── v4.7 File Tracing ────────────────────────────────────────────
+        JObject ImportDwgCmd(JObject p)
+        {
+            // Import DWG/DXF natively via Rhino command, then post-process
+            var filePath = p["file_path"]?.ToString();
+            if (string.IsNullOrEmpty(filePath) || !System.IO.File.Exists(filePath))
+                return Err("file_path required and must exist");
+            var ext = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
+            if (ext != ".dwg" && ext != ".dxf")
+                return Err("Only .dwg and .dxf files supported by import_dwg");
+            // Count objects before import
+            int before = Doc.Objects.Count;
+            // Run Rhino import command
+            var script = $"_-Import \"{filePath}\" _Enter";
+            RhinoApp.RunScript(script, false);
+            int after = Doc.Objects.Count;
+            int imported = after - before;
+            Doc.Views.Redraw();
+            return new JObject
+            {
+                ["status"] = "ok",
+                ["file"] = System.IO.Path.GetFileName(filePath),
+                ["objects_imported"] = imported,
+                ["message"] = $"Imported {imported} objects from {System.IO.Path.GetFileName(filePath)}. Use query_scene to inspect the result."
+            };
+        }
+
+        JObject CalibrateScaleCmd(JObject p)
+        {
+            // User provides two points and the known real-world distance between them
+            // The tool scales all geometry to match
+            var pt1 = p["point1"] as JObject;
+            var pt2 = p["point2"] as JObject;
+            double knownDistance = p["known_distance"]?.ToObject<double>() ?? 0;
+            string unit = p["unit"]?.ToString() ?? "mm";
+            if (pt1 == null || pt2 == null || knownDistance <= 0)
+                return Err("point1, point2 (x/y/z) and known_distance required");
+            var p1 = new Rhino.Geometry.Point3d(pt1["x"]?.ToObject<double>() ?? 0, pt1["y"]?.ToObject<double>() ?? 0, pt1["z"]?.ToObject<double>() ?? 0);
+            var p2 = new Rhino.Geometry.Point3d(pt2["x"]?.ToObject<double>() ?? 0, pt2["y"]?.ToObject<double>() ?? 0, pt2["z"]?.ToObject<double>() ?? 0);
+            double measuredDistance = p1.DistanceTo(p2);
+            if (measuredDistance < 1e-10) return Err("Points are too close together");
+            // Convert known distance to model units
+            double knownInModelUnits = knownDistance;
+            if (unit == "mm") knownInModelUnits = RhinoMath.UnitScale(UnitSystem.Millimeters, Doc.ModelUnitSystem) * knownDistance;
+            else if (unit == "m") knownInModelUnits = RhinoMath.UnitScale(UnitSystem.Meters, Doc.ModelUnitSystem) * knownDistance;
+            else if (unit == "cm") knownInModelUnits = RhinoMath.UnitScale(UnitSystem.Centimeters, Doc.ModelUnitSystem) * knownDistance;
+            else if (unit == "ft") knownInModelUnits = RhinoMath.UnitScale(UnitSystem.Feet, Doc.ModelUnitSystem) * knownDistance;
+            else if (unit == "in") knownInModelUnits = RhinoMath.UnitScale(UnitSystem.Inches, Doc.ModelUnitSystem) * knownDistance;
+            double scaleFactor = knownInModelUnits / measuredDistance;
+            var xform = Rhino.Geometry.Transform.Scale(Rhino.Geometry.Point3d.Origin, scaleFactor);
+            int scaled = 0;
+            foreach (var obj in Doc.Objects)
+            {
+                if (!obj.IsDeleted) { Doc.Objects.Transform(obj.Id, xform, true); scaled++; }
+            }
+            Doc.Views.Redraw();
+            return new JObject
+            {
+                ["status"] = "ok",
+                ["scale_factor"] = Math.Round(scaleFactor, 6),
+                ["measured_distance"] = Math.Round(measuredDistance, 4),
+                ["known_distance"] = knownDistance,
+                ["unit"] = unit,
+                ["objects_scaled"] = scaled
+            };
         }
     }
 }

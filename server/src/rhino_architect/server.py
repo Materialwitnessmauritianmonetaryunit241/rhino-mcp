@@ -1145,6 +1145,256 @@ async def run_command(params: RunCommandInput) -> dict:
 
 # Ã¢â€â‚¬Ã¢â€â‚¬ Entry point Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
+
+
+# =============================================================================
+# SECTIONS & PLANS
+# =============================================================================
+
+@mcp.tool()
+async def create_section(label: str = "", start_x: float = None, start_y: float = None, start_z: float = None, end_x: float = None, end_y: float = None, end_z: float = None, view_side: str = "left") -> str:
+    """Create an architectural section line with arrowheads on a dedicated layer. The model will place a default section line at the model center — reposition it and call cut_section when satisfied."""
+    params = {"view_side": view_side}
+    if label: params["label"] = label
+    if start_x is not None: params["start_point"] = {"x": start_x, "y": start_y or 0, "z": start_z or 0}
+    if end_x is not None: params["end_point"] = {"x": end_x, "y": end_y or 0, "z": end_z or 0}
+    return await _exec_simple("create_section", params)
+
+
+@mcp.tool()
+async def create_elevation(label: str = "", direction: str = "north", offset: float = None) -> str:
+    """Create an elevation marker for the specified direction (north/south/east/west)."""
+    params = {"direction": direction}
+    if label: params["label"] = label
+    if offset is not None: params["offset"] = offset
+    return await _exec_simple("create_elevation", params)
+
+
+@mcp.tool()
+async def cut_section(label: str, capture: bool = True) -> str:
+    """Cut the named section — creates clipping plane, aligns view, captures result. Call after user has confirmed section line position."""
+    return await _exec_simple("cut_section", {"label": label, "capture": capture})
+
+
+@mcp.tool()
+async def align_view_to_section(label: str) -> str:
+    """Align the viewport camera perpendicular to the named section/elevation cut plane."""
+    return await _exec_simple("align_view_to_section", {"label": label})
+
+
+@mcp.tool()
+async def create_plan(floor: str, cut_height_mm: float = 1200.0, capture: bool = True) -> str:
+    """Generate a floor plan for the specified floor (e.g. '1', '8', 'ground', 'G', 'B1'). Automatically places a horizontal clipping plane at cut_height_mm above the floor level and captures a top-down orthographic view."""
+    return await _exec_simple("create_plan", {"floor": floor, "cut_height_mm": cut_height_mm, "capture": capture})
+
+
+@mcp.tool()
+async def create_all_plans(cut_height_mm: float = 1200.0, capture: bool = True) -> str:
+    """Generate floor plans for ALL detected floor levels simultaneously."""
+    return await _exec_simple("create_all_plans", {"cut_height_mm": cut_height_mm, "capture": capture})
+
+
+@mcp.tool()
+async def list_sections() -> str:
+    """List all sections, elevations, and plans currently defined in the model."""
+    return await _exec_simple("list_sections", {})
+
+
+@mcp.tool()
+async def update_section(label: str, start_x: float = None, start_y: float = None, start_z: float = None, end_x: float = None, end_y: float = None, end_z: float = None) -> str:
+    """Reposition an existing section line and re-cut."""
+    params = {"label": label}
+    if start_x is not None: params["start_point"] = {"x": start_x, "y": start_y or 0, "z": start_z or 0}
+    if end_x is not None: params["end_point"] = {"x": end_x, "y": end_y or 0, "z": end_z or 0}
+    return await _exec_simple("update_section", params)
+
+
+@mcp.tool()
+async def remove_section(label: str) -> str:
+    """Remove a section, elevation, or plan layer and its clipping plane."""
+    return await _exec_simple("remove_section", {"label": label})
+
+
+# =============================================================================
+# ILLUSTRATION & DISPLAY MODES
+# =============================================================================
+
+@mcp.tool()
+async def create_display_mode(name: str, preset: str = "", base_mode: str = "", background_color: str = "", edge_color: str = "", edge_thickness: int = -1, silhouette_thickness: int = -1, show_edges: bool = None, show_silhouettes: bool = None, shading_enabled: bool = None) -> str:
+    """Create a custom Rhino display mode for illustration. Presets: diagram, technical, blueprint, sketch, axonometric, atmospheric, monochrome, cutaway."""
+    params = {"name": name}
+    if preset: params["preset"] = preset
+    if base_mode: params["base_mode"] = base_mode
+    if background_color: params["background_color"] = background_color
+    if edge_color: params["edge_color"] = edge_color
+    if edge_thickness >= 0: params["edge_thickness"] = edge_thickness
+    if silhouette_thickness >= 0: params["silhouette_thickness"] = silhouette_thickness
+    if show_edges is not None: params["show_edges"] = show_edges
+    if show_silhouettes is not None: params["show_silhouettes"] = show_silhouettes
+    if shading_enabled is not None: params["shading_enabled"] = shading_enabled
+    return await _exec_simple("create_display_mode", params)
+
+
+@mcp.tool()
+async def apply_display_mode(name: str) -> str:
+    """Apply a display mode (built-in or custom AI- mode) to the active viewport."""
+    return await _exec_simple("apply_display_mode", {"name": name})
+
+
+@mcp.tool()
+async def list_display_modes() -> str:
+    """List all available display modes including custom AI-created ones."""
+    return await _exec_simple("list_display_modes", {})
+
+
+@mcp.tool()
+async def adjust_display_mode(name: str, background_color: str = "", edge_color: str = "", edge_thickness: int = -1, silhouette_thickness: int = -1) -> str:
+    """Adjust parameters of an existing custom AI display mode."""
+    params = {"name": name}
+    if background_color: params["background_color"] = background_color
+    if edge_color: params["edge_color"] = edge_color
+    if edge_thickness >= 0: params["edge_thickness"] = edge_thickness
+    if silhouette_thickness >= 0: params["silhouette_thickness"] = silhouette_thickness
+    return await _exec_simple("adjust_display_mode", params)
+
+
+@mcp.tool()
+async def delete_display_mode(name: str) -> str:
+    """Delete a custom AI display mode (only AI- prefixed modes can be deleted)."""
+    return await _exec_simple("delete_display_mode", {"name": name})
+
+
+@mcp.tool()
+async def capture_illustration(display_mode: str = "", width: int = 1600, height: int = 1200, style_notes: str = "", restore_mode: bool = True) -> str:
+    """Capture the viewport as an illustration using the specified or current display mode."""
+    params = {"width": width, "height": height, "restore_mode": restore_mode}
+    if display_mode: params["display_mode"] = display_mode
+    if style_notes: params["style_notes"] = style_notes
+    return await _exec_simple("capture_illustration", params)
+
+
+# =============================================================================
+# MATERIAL INTELLIGENCE
+# =============================================================================
+
+@mcp.tool()
+async def search_materials(keyword: str, limit: int = 5) -> str:
+    """Search AmbientCG for PBR materials matching keyword. Returns candidates with names, preview info, and real-world dimensions. Call download_material with a specific asset_id to proceed."""
+    import json
+    try:
+        from rhino_architect.material_downloader import search_materials as _search
+        results = _search(keyword, limit)
+        return json.dumps({"status": "ok", "results": results, "count": len(results)})
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@mcp.tool()
+async def download_material(asset_id: str, layer_name: str, resolution: str = "2K", confirmed: bool = False) -> str:
+    """
+    Download and apply a PBR material from AmbientCG to a Rhino layer.
+    IMPORTANT: First call with confirmed=False to get a preview of what will be downloaded.
+    Only call with confirmed=True after the user has explicitly approved.
+    asset_id: from search_materials results.
+    layer_name: Rhino layer to assign the material to.
+    resolution: '1K', '2K', or '4K'.
+    """
+    import json
+    try:
+        from rhino_architect.material_downloader import get_material_info, download_material as _download, compute_uv_repeat
+        info = get_material_info(asset_id)
+        if not info:
+            return json.dumps({"status": "error", "message": f"Asset {asset_id} not found"})
+
+        # Preview mode — return info without downloading
+        if not confirmed:
+            dims = info.get("dimensionsInMeters", [1.0, 1.0])
+            size_m = dims[0] if dims else 1.0
+            return json.dumps({
+                "status": "preview",
+                "asset_id": asset_id,
+                "display_name": info.get("displayName", asset_id),
+                "physical_size_m": size_m,
+                "resolution": resolution,
+                "license": "CC0 (free, no attribution required)",
+                "message": f"Ready to download '{info.get('displayName', asset_id)}' ({resolution}, CC0). Call again with confirmed=True to proceed.",
+                "confirmed_required": True
+            })
+
+        # Download
+        result = _download(asset_id, resolution)
+
+        # Get model unit system from Rhino
+        ping_result = json.loads(await _exec_simple("ping", {}))
+        unit_system = ping_result.get("unit_system", "Meters")
+
+        physical_size_m = result.get("physical_size_m", 1.0)
+        uv_repeat = compute_uv_repeat(physical_size_m, unit_system)
+
+        # Apply via C# handler
+        apply_params = {
+            "layer_name": layer_name,
+            "material_name": result["display_name"],
+            "maps": result["local_paths"],
+            "physical_size_m": physical_size_m,
+            "uv_repeat": uv_repeat
+        }
+        return await _exec_simple("apply_downloaded_material", apply_params)
+    except Exception as e:
+        return json.dumps({"status": "error", "message": str(e)})
+
+
+@mcp.tool()
+async def edit_material(layer_name: str = "", material_name: str = "", roughness: float = -1, metallic: float = -1, diffuse_color: str = "", transparency: float = -1, texture_scale: float = -1, texture_rotation: float = -361) -> str:
+    """Edit properties of an existing Rhino render material on a layer."""
+    params = {}
+    if layer_name: params["layer_name"] = layer_name
+    if material_name: params["material_name"] = material_name
+    if roughness >= 0: params["roughness"] = roughness
+    if metallic >= 0: params["metallic"] = metallic
+    if diffuse_color: params["diffuse_color"] = diffuse_color
+    if transparency >= 0: params["transparency"] = transparency
+    if texture_scale > 0: params["texture_scale"] = texture_scale
+    if texture_rotation > -361: params["texture_rotation"] = texture_rotation
+    return await _exec_simple("edit_material", params)
+
+
+@mcp.tool()
+async def list_materials() -> str:
+    """List all render materials in the current Rhino document."""
+    return await _exec_simple("list_materials", {})
+
+
+@mcp.tool()
+async def get_material(layer_name: str = "", material_index: int = -1) -> str:
+    """Get full properties of a render material by layer name or material index."""
+    params = {}
+    if layer_name: params["layer_name"] = layer_name
+    if material_index >= 0: params["material_index"] = material_index
+    return await _exec_simple("get_material", params)
+
+
+# =============================================================================
+# FILE TRACING
+# =============================================================================
+
+@mcp.tool()
+async def import_dwg(file_path: str) -> str:
+    """Import a DWG or DXF file into Rhino using the native importer (100% accurate, no AI interpretation). Post-processes imported geometry."""
+    return await _exec_simple("import_dwg", {"file_path": file_path})
+
+
+@mcp.tool()
+async def calibrate_scale(point1_x: float, point1_y: float, point1_z: float, point2_x: float, point2_y: float, point2_z: float, known_distance: float, unit: str = "mm") -> str:
+    """Calibrate model scale by specifying two points and their known real-world distance. Rescales all geometry to match. Use after importing or tracing files that may be at wrong scale."""
+    return await _exec_simple("calibrate_scale", {
+        "point1": {"x": point1_x, "y": point1_y, "z": point1_z},
+        "point2": {"x": point2_x, "y": point2_y, "z": point2_z},
+        "known_distance": known_distance,
+        "unit": unit
+    })
+
+
 def main():
     """Entry point for the rhino-architect MCP server (called by pyproject.toml script)."""
     mcp.run()
