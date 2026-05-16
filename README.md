@@ -7,6 +7,7 @@
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-green)](https://modelcontextprotocol.io/)
 [![Works with Claude](https://img.shields.io/badge/Works%20with-Claude-orange)](https://claude.ai/)
 [![Works with ChatGPT](https://img.shields.io/badge/Works%20with-ChatGPT-brightgreen)](https://openai.com/)
+[![Works with Codex](https://img.shields.io/badge/Works%20with-Codex-blue)](https://openai.com/codex)
 [![Works with Ollama](https://img.shields.io/badge/Works%20with-Ollama-purple)](https://ollama.com/)
 
 ---
@@ -115,6 +116,49 @@ For a detailed walkthrough see **INSTALL_GUIDE.txt**.
 ### Claude Desktop (recommended)
 The installer patches `claude_desktop_config.json` automatically. Just restart Claude Desktop after install.
 
+Manual config — `%APPDATA%\Claude\claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "rhino-architect": {
+      "command": "uv",
+      "args": ["--directory", "C:\\path\\to\\rhino-mcp\\server", "run", "rhino-architect"]
+    }
+  }
+}
+```
+
+### OpenAI Codex
+INSTALL.bat option [4] writes `%USERPROFILE%\.codex\config.toml` automatically.
+
+Manual config — `~/.codex/config.toml`:
+```toml
+[mcp_servers.rhino_architect]
+command = "uv"
+args = [
+  "--directory",
+  "C:\\path\\to\\rhino-mcp\\server",
+  "run",
+  "rhino-architect"
+]
+startup_timeout_sec = 20
+tool_timeout_sec = 120
+enabled = true
+
+[mcp_servers.rhino_architect.env]
+RHINO_HOST = "127.0.0.1"
+RHINO_PORT = "9544"
+RHINO_SAFE_MODE = "1"
+```
+
+Or via CLI:
+```powershell
+codex mcp add rhino_architect --env RHINO_SAFE_MODE=1 -- uv --directory "C:\path\to\rhino-mcp\server" run rhino-architect
+codex mcp list
+```
+
+Then in Rhino run `AIBridge`, and ask Codex: *"ping Rhino"*
+
 ### ChatGPT
 ```
 cd server
@@ -190,11 +234,32 @@ Output: `plugin/bin/Release/net8.0/`. Copy `.rhp` + DLLs to the Rhino plugin fol
 
 **Large scenes slow** — Use `query_scene` with filters rather than fetching everything at once. The cache handles 5000+ objects at interactive speed.
 
+**Run health check** — `cd server && uv run python ../scripts/doctor.py` checks plugin, port, Claude Desktop, and Codex config in one pass.
+
+**Codex not seeing the server** — Run `codex mcp list` and confirm `rhino_architect` is listed and `enabled = true`. Re-run INSTALL.bat option [4] if missing.
+
 ---
 
 ## Changelog
 
-### v4.5 (current)
+### v4.7 (current)
+- **Sections & Plans**: `create_section`, `create_elevation`, `cut_section`, `create_plan`, `create_all_plans` — full architectural drawing workflow
+- **Illustration Engine**: `create_display_mode` with 8 presets (diagram, technical, blueprint, sketch, axonometric, atmospheric, monochrome, cutaway); `capture_illustration`
+- **Material Intelligence**: `search_materials`, `download_material` (AmbientCG, confirmation gate), `apply_downloaded_material` with unit-aware UV scaling
+- **PDF Tracing**: `trace_pdf` (PyMuPDF + OpenCV CV pipeline, vector text at 1.0 confidence); `get_pdf_info`, `preview_pdf_page`
+- **File Import**: `import_dwg` (native Rhino DWG/DXF), `calibrate_scale`
+- **Codex support**: `scripts/patch_codex_config.py` + INSTALL.bat option [4]
+- **Doctor script**: `scripts/doctor.py` — full health-check across plugin, port, Claude, Codex
+- Removed TrustManager — always developer mode
+- 30 bug fixes across all v4.7 systems (wrong TextureType slots, inverted merge logic, double Y-flip in text tracing, 22 missing json.dumps wrappers, cache rglob, and more)
+
+### v4.6
+- Auth token + 3-tier trust modes
+- Dry-run support on delete/boolean/batch
+- Viewport metadata + scene query modes
+- 42-test pytest suite
+
+### v4.5
 - Pre-built plugin — no .NET SDK required on target machines
 - `set_camera` with explicit location/target or bounding-box framing
 - `get_rhino_commands` — live Rhino command discoverability

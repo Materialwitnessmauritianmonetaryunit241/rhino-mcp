@@ -117,6 +117,13 @@ cd /d "%SERVER_DIR%"
 uv run python "%SCRIPTS_DIR%\patch_claude_config.py" "%SERVER_DIR%"
 echo.
 
+:: -- [4] Configure Codex (optional) ----------------------------------------
+echo.
+echo  Configuring OpenAI Codex (optional)...
+cd /d "%SERVER_DIR%"
+uv run python "%SCRIPTS_DIR%\patch_codex_config.py" "%SERVER_DIR%"
+echo.
+
 :: -- Done -------------------------------------------------------------------------
 echo  ============================================================
 echo    INSTALLATION COMPLETE  ^|  RhinoAIBridge by tanishqb

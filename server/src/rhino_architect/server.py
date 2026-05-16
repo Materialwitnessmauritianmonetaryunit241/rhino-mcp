@@ -1,272 +1,16 @@
-﻿
-
-# =============================================================================
-# DESIGN MEMORY TOOLS
-# =============================================================================
-
-@mcp.tool()
-async def set_design_brief(brief: str) -> str:
-    """Store the project design brief inside the Rhino file (.3dm UserData).
-
-    Call this at the start of any significant design session. The brief persists
-    in the .3dm file and survives save/reload. Include: building type, program,
-    key constraints, structural approach, client requirements.
-    """
-    return json.dumps(await _exec_simple("set_design_brief", {"brief": brief}))
-
-
-@mcp.tool()
-async def get_design_brief() -> str:
-    """Retrieve the project design brief and global design rules stored in the Rhino file."""
-    return json.dumps(await _exec_simple("get_design_brief", {}))
-
-
-@mcp.tool()
-async def tag_object(ids: list[str], tags: dict) -> str:
-    """Write metadata tags to one or more Rhino objects (stored in UserDictionary, persists in .3dm).
-
-    Useful tag keys:
-      ai_group    -- logical group name (e.g. 'tower_core_level_3')
-      ai_rule     -- regeneration rule (e.g. 'concrete 300mm, 8.4m bay')
-      ai_label    -- human-readable label
-      ai_relations -- JSON string: {"children": ["id1", "id2"], "parent": "id0"}
-    """
-    return json.dumps(await _exec_simple("tag_object", {"ids": ids, "tags": tags}))
-
-
-@mcp.tool()
-async def get_provenance(id: str) -> str:
-    """Get the full creation context (provenance) for a Rhino object.
-
-    Returns: which tool created it, with what parameters, in which session.
-    Answers: 'why does this object exist?' and 'how was it created?'
-    All AI-created objects are auto-tagged at creation time.
-    """
-    return json.dumps(await _exec_simple("get_provenance", {"id": id}))
-
-
-@mcp.tool()
-async def search_memory(query: str) -> str:
-    """Search the design memory for objects, rules, groups, and sessions matching a keyword.
-
-    Searches across: design brief, session logs, named groups, and all object tags.
-    Returns matching results with source and context (max 50 hits).
-    Example queries: 'tower core', 'concrete 300mm', 'facade A', 'level 3 columns'.
-    """
-    return json.dumps(await _exec_simple("search_memory", {"query": query}))
-
-
-@mcp.tool()
-async def get_related_objects(id: str, relation: str = "") -> str:
-    """Get objects related to a given object via stored ai_relations tags.
-
-    relation: 'parent', 'children', 'mirrors', 'group', or '' for all relations.
-    Example: get all windows that belong to a specific facade wall.
-    """
-    return json.dumps(await _exec_simple("get_related_objects", {"id": id, "relation": relation}))
-
-
-@mcp.tool()
-async def name_group(name: str, ids: list[str]) -> str:
-    """Create or update a named group of objects stored in the Rhino file.
-
-    Named groups persist in the .3dm file. Use to label sets of objects:
-    'tower_core', 'north_facade', 'level_3_columns'. Retrieve with get_group.
-    """
-    return json.dumps(await _exec_simple("name_group", {"name": name, "ids": ids}))
-
-
-@mcp.tool()
-async def get_group(name: str) -> str:
-    """Get the object IDs belonging to a named group stored in the Rhino file."""
-    return json.dumps(await _exec_simple("get_group", {"name": name}))
-
-
-@mcp.tool()
-async def get_all_groups() -> str:
-    """List all named groups and their member object IDs stored in the Rhino file."""
-    return json.dumps(await _exec_simple("get_all_groups", {}))
-
-
-@mcp.tool()
-async def add_design_rule(rule: str) -> str:
-    """Add a global design rule to the project memory (persists in .3dm file).
-
-    Rules guide future generation decisions. Examples:
-      'bay spacing must be 8400mm'
-      'concrete walls 300mm thick'
-      'floor-to-floor height 3500mm'
-      'no windows below 900mm sill height'
-    """
-    return json.dumps(await _exec_simple("add_design_rule", {"rule": rule}))
-
-
-@mcp.tool()
-async def log_session(summary: str) -> str:
-    """Log a summary of the current AI session to the project memory (persists in .3dm).
-
-    Call at the end of a work session with a brief description of what was done.
-    Logs persist in the .3dm file and provide context for future sessions.
-    """
-    return json.dumps(await _exec_simple("log_session", {"summary": summary}))
-
-
-# =============================================================================
-# INCREMENTAL SCENE SYNC TOOLS
-# =============================================================================
-
-@mcp.tool()
-async def get_scene_diff(from_version: int) -> str:
-    """Get what changed in the Rhino scene since a specific version number.
-
-    Returns arrays of added, deleted, and modified object refs.
-    Use at the start of every session to catch up cheaply instead of
-    re-querying the full scene. Get current version from ping or get_tracker_version.
-
-    WHEN TO USE: much faster than get_scene_summary on large models --
-    only returns what changed, not everything.
-    """
-    return json.dumps(await _exec_simple("get_scene_diff", {"from_version": from_version}))
-
-
-@mcp.tool()
-async def get_change_log(limit: int = 50, since_version: int = 0) -> str:
-    """Get the chronological log of recent scene change events.
-
-    Returns change events (added/deleted/modified) with timestamps and version numbers.
-    Useful for understanding the sequence of recent edits or auditing a session.
-    Max limit: 200 events.
-    """
-    return json.dumps(await _exec_simple("get_change_log", {
-        "limit": limit, "since_version": since_version
-    }))
-
-
-@mcp.tool()
-async def get_tracker_version() -> str:
-    """Get the current change tracker version number.
-
-    Workflow: store this version, do work or wait for user edits,
-    then call get_scene_diff(from_version=stored_version) to see what changed.
-    """
-    return json.dumps(await _exec_simple("get_tracker_version", {}))
-
-
-# =============================================================================
-# SEMANTIC SCENE INTELLIGENCE TOOLS
-# =============================================================================
-
-@mcp.tool()
-async def analyze_architecture() -> str:
-    """Run a full semantic analysis of the Rhino scene.
-
-    Classifies all geometry into architectural types: walls, slabs, columns,
-    cores, facade panels, openings, stairs, massing. Detects floor levels by
-    clustering Z-positions of flat geometry. Detects structural grid from
-    column centroid positions.
-
-    Returns: level count, system breakdown (counts + IDs), detected grid spacing,
-    unclassified geometry ratio.
-
-    Result is CACHED against scene_version -- calling twice costs almost nothing
-    if the scene has not changed. Force refresh by modifying the scene.
-    """
-    return json.dumps(await _exec_simple("analyze_architecture", {}))
-
-
-@mcp.tool()
-async def get_building_systems(system: str = "all") -> str:
-    """Get objects grouped by architectural building system.
-
-    system options:
-      'structure'   -- columns, slabs, cores
-      'envelope'    -- walls, facade panels
-      'openings'    -- windows, doors
-      'circulation' -- stairs, ramps
-      'all'         -- everything (default)
-
-    Each object includes: id, level index, layer, bounding box size [dx, dy, dz] in mm.
-    Call analyze_architecture first for an overview, then drill into systems.
-    """
-    return json.dumps(await _exec_simple("get_building_systems", {"system": system}))
-
-
-@mcp.tool()
-async def get_level_summary(level: int = -1) -> str:
-    """Get a summary of one or all detected floor levels in the model.
-
-    level: floor index (0 = ground floor), or -1 for all levels (default).
-    Returns per level: elevation (mm), object count, count by architectural type.
-    Levels are auto-detected by clustering the Z-positions of flat geometry.
-    """
-    params = {"level": level} if level >= 0 else {}
-    return json.dumps(await _exec_simple("get_level_summary", params))
-
-
-@mcp.tool()
-async def detect_design_patterns() -> str:
-    """Detect repeating design patterns in the Rhino model.
-
-    Finds:
-      - Structural grid: dominant X/Y spacing from column centroid positions
-      - Repeated modules: bounding-box sizes that appear 3+ times
-      - Level count and detected floor heights
-
-    Use before adding new elements to understand the existing design logic
-    (bay spacing, grid, typical element sizes) so you can match them.
-    """
-    return json.dumps(await _exec_simple("detect_design_patterns", {}))
-
-
-@mcp.tool()
-async def find_unassigned_geometry(min_volume: float = 0.0) -> str:
-    """Find geometry that couldn't be classified into any architectural system.
-
-    min_volume: minimum bounding box volume in mm^3 to filter tiny objects (default: 0 = all).
-    Returns objects with layer and bounding box size [dx, dy, dz].
-
-    Use to review orphaned geometry, decide what to do with it (tag it,
-    assign to a layer, delete it, or reclassify it).
-    """
-    return json.dumps(await _exec_simple("find_unassigned_geometry", {"min_volume": min_volume}))
-
-
-# =============================================================================
-# SMART BATCHING -- PREVIEW
-# =============================================================================
-
-@mcp.tool()
-async def batch_preview(commands: list[dict]) -> str:
-    """Validate a batch plan without executing any commands (dry run, zero mutations).
-
-    Checks each step:
-      - Is it a known command?
-      - Are  paths (, .object_ids, .object_ids[0]) forward-reference-free?
-      - Are there destructive commands that need extra care?
-      - Which steps involve viewport captures (consider capture_at_end)?
-
-    Returns per-step status (valid/invalid/warning), estimated creates/deletes,
-    and all warnings. Completely safe to call at any time -- does NOT modify Rhino.
-
-    WHEN TO USE: before any complex or destructive batch, especially those with
-    many  chains or boolean operations.
-    """
-    return json.dumps(await _exec_simple("batch_preview", {"commands": commands}))
-
-
-# RhinoAIBridge v4.5 Ã¢â‚¬â€ MCP Server
+# RhinoAIBridge v4.5 — MCP Server
 # by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
-"""Rhino AI Bridge v4.5 Ã¢â‚¬â€ MCP Server.
+"""Rhino AI Bridge v4.5 — MCP Server.
 
 This release combines:
-  Phase 1 Ã¢â‚¬â€ lean responses (dicts Ã¢â€ â€™ FastMCP Ã¢â€ â€™ orjson on wire)
-  Phase 2 Ã¢â‚¬â€ scene_version etag surfaced on every response (cache key for the model)
-  Phase 3 Ã¢â‚¬â€ atomic batches + reference resolution ($1.object_ids[0] chaining)
-  Phase 5 Ã¢â‚¬â€ architect intelligence layer (massing, floors, core, facade, schedules)
-  Phase 6 Ã¢â‚¬â€ consolidated 28-tool MCP surface (was 66 in v3)
+  Phase 1 — lean responses (dicts Ã¢â€ ' FastMCP Ã¢â€ ' orjson on wire)
+  Phase 2 — scene_version etag surfaced on every response (cache key for the model)
+  Phase 3 — atomic batches + reference resolution ($1.object_ids[0] chaining)
+  Phase 5 — architect intelligence layer (massing, floors, core, facade, schedules)
+  Phase 6 — consolidated 28-tool MCP surface (was 66 in v3)
 
-Phase 4 (multiplexed protocol) and Phase 7 (System.Text.Json) intentionally deferred Ã¢â‚¬â€
+Phase 4 (multiplexed protocol) and Phase 7 (System.Text.Json) intentionally deferred —
 both buy less than the cache + tool-surface work, and both have correctness pitfalls
 we'd rather defer than ship hastily.
 
@@ -280,6 +24,7 @@ import logging
 import sys
 from typing import Any, Optional
 
+import json
 import orjson
 from mcp.server.fastmcp import FastMCP
 from pydantic import BaseModel, ConfigDict, Field
@@ -318,7 +63,7 @@ def _check_safe_mode(tool_name: str) -> dict | None:
 mcp = FastMCP("RhinoAIBridge")
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Helpers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Helpers Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 async def _exec(command: str, params: dict[str, Any]) -> dict:
     conn = await get_connection()
     resp = await conn.send_command(command, params)
@@ -356,7 +101,7 @@ async def _exec_batch(
     atomic: bool = True,
     stop_on_error: Optional[bool] = None,
 ) -> dict:
-    """Phase 3 Ã¢â‚¬â€ execute a batch with optional atomic semantics."""
+    """Phase 3 — execute a batch with optional atomic semantics."""
     try:
         conn = await get_connection()
         resp = await conn.send_batch(commands, atomic=atomic, stop_on_error=stop_on_error)
@@ -378,7 +123,7 @@ WI = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "
 DE = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False}
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Input Models Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Input Models Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 class Empty(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -462,17 +207,17 @@ class ModifyObjectInput(BaseModel):
 class BatchSubCommand(BaseModel):
     """One sub-command inside a batch. The plugin routes on `type`; `params` is passed verbatim.
 
-    `type` must be one of the plugin command names Ã¢â‚¬â€ same names as the MCP tools
+    `type` must be one of the plugin command names — same names as the MCP tools
     (create_object, derive_floors_from_mass, create_core, transform_objects, modify_object,
     delete_objects, query_scene, setup_arch_layers, batch_layer_visibility, execute_script,
     undo, Ã¢â‚¬Â¦) plus any legacy commands listed in rhino://capabilities.
 
     `params` is the argument dict exactly as you'd pass to the corresponding standalone tool,
     EXCEPT that any string value may start with a `$N` reference to resolve to a prior result:
-        "$1"                Ã¢â€ â€™ whole result dict of op 1
-        "$1.object_ids[0]"  Ã¢â€ â€™ first GUID from op 1
-        "$2.mass_id"        Ã¢â€ â€™ mass_id field from op 2
-        "$3.bounding_box.min" Ã¢â€ â€™ nested path
+        "$1"                Ã¢â€ ' whole result dict of op 1
+        "$1.object_ids[0]"  Ã¢â€ ' first GUID from op 1
+        "$2.mass_id"        Ã¢â€ ' mass_id field from op 2
+        "$3.bounding_box.min" Ã¢â€ ' nested path
     """
     model_config = ConfigDict(extra="forbid")
     type: str = Field(
@@ -489,7 +234,7 @@ class BatchSubCommand(BaseModel):
     params: dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Arguments for the command Ã¢â‚¬â€ same shape as calling the tool standalone. "
+            "Arguments for the command — same shape as calling the tool standalone. "
             "Any string value may be a $N reference to a prior op's result, e.g. "
             "'$1.object_ids[0]' or '$2.mass_id'."
         ),
@@ -619,7 +364,7 @@ class CaptureInput(BaseModel):
     max_bytes: int = 800000
     format: str = "auto"   # "auto" | "png" | "jpeg"
     quality: int = Field(default=80, ge=1, le=100)
-    restore_state: bool = Field(default=True, description="Restore viewport camera and display mode after capture. Default True Ã¢â‚¬â€ the AI can inspect the model from any angle without disrupting the user's current view.")
+    restore_state: bool = Field(default=True, description="Restore viewport camera and display mode after capture. Default True — the AI can inspect the model from any angle without disrupting the user's current view.")
     view: Optional[str] = Field(default=None, description="Temporarily switch to this named view before capturing (Top, Front, Right, Perspective, etc.). Restored if restore_state=True.")
     display_mode: Optional[str] = Field(default=None, description="Temporarily switch to this display mode before capturing (Wireframe, Shaded, Rendered, Arctic, etc.). Restored if restore_state=True.")
 
@@ -680,7 +425,7 @@ class SetCameraInput(BaseModel):
     target: Optional[list[float]] = Field(None, description="Camera target [x, y, z]. Omit when using box_min/box_max.")
     lens_length: Optional[float] = Field(None, description="Lens focal length in mm. 50=normal, 24=wide, 135=tele.")
     projection: Optional[str] = Field(None, description="'perspective' | 'parallel'. Defaults to current.")
-    box_min: Optional[list[float]] = Field(None, description="Bounding box min [x,y,z] to zoom-frame. Provide with box_max Ã¢â‚¬â€ camera distance auto-computed.")
+    box_min: Optional[list[float]] = Field(None, description="Bounding box min [x,y,z] to zoom-frame. Provide with box_max — camera distance auto-computed.")
     box_max: Optional[list[float]] = Field(None, description="Bounding box max [x,y,z] to zoom-frame. Provide with box_min.")
 
 
@@ -705,14 +450,14 @@ class RunCommandInput(BaseModel):
     echo: bool = Field(default=False, description="Echo the command to Rhino's command line. Default False (silent).")
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Capabilities Resource Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Capabilities Resource Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 # Long-tail commands (still callable inside `batch`) and discoverable workflows.
 CAPABILITIES: dict[str, Any] = {
     "version": "4.5.0",
     "phase": "1+2+3+5+6",
     "deferred_phases": {
-        "phase_4": "multiplexed protocol Ã¢â‚¬â€ deferred (UI-thread serialization makes the gain marginal)",
-        "phase_7": "System.Text.Json source generators Ã¢â‚¬â€ deferred (low ROI vs. wider risk)",
+        "phase_4": "multiplexed protocol — deferred (UI-thread serialization makes the gain marginal)",
+        "phase_7": "System.Text.Json source generators — deferred (low ROI vs. wider risk)",
     },
     "tool_surface": "consolidated",
     "preferred_tools": [
@@ -793,7 +538,7 @@ CAPABILITIES: dict[str, Any] = {
 }
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Resource Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Resource Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 @mcp.resource("rhino://capabilities")
 def capabilities() -> str:
     """Long-tail capabilities, examples, legacy command names, preferred workflows.
@@ -821,13 +566,13 @@ async def arch_defaults_resource() -> str:
     }).decode("utf-8")
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Tools Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Tools Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="ping", annotations=RO)
 async def ping(params: Empty) -> dict:
     """Verify Rhino is reachable. Returns build hash, doc info, units, and current scene_version.
 
-    Cheap (sub-ms on server). Useful at conversation start, and as an etag check Ã¢â‚¬â€
+    Cheap (sub-ms on server). Useful at conversation start, and as an etag check —
     if scene_version matches what you saw last time, the scene is unchanged and you
     can skip re-querying."""
     try:
@@ -846,14 +591,14 @@ async def ping(params: Empty) -> dict:
 
 @mcp.tool(name="query_scene", annotations=RO)
 async def query_scene(params: QuerySceneInput) -> dict:
-    """Universal scene query Ã¢â‚¬â€ replaces get_context, get_scene_summary, get_objects, list_layers.
+    """Universal scene query — replaces get_context, get_scene_summary, get_objects, list_layers.
 
     scope='summary' for full scene summary (counts, bbox, layers).
     scope='layers' for layer list with counts.
     scope='objects' (default) with filter={layer, type, name_pattern} and detail=ids/summary/full.
 
     Phase 2: served from the snapshot cache, so all branches are O(1) or O(M) rather than O(N).
-    Returns scene_version Ã¢â‚¬â€ use it as an etag across calls."""
+    Returns scene_version — use it as an etag across calls."""
     return await _exec_simple("query_scene", params.model_dump(exclude_none=True))
 
 
@@ -865,7 +610,7 @@ async def create_object(params: CreateObjectInput) -> dict:
     massing, core). Primitives (box, sphere, cylinder, etc.) go through the generic path.
 
     Returns object_ids and bounding_box. Pass measure=true to also compute area/volume
-    (off by default Ã¢â‚¬â€ saves a Brep integration on every floor of a 30-floor stack).
+    (off by default — saves a Brep integration on every floor of a 30-floor stack).
 
     Examples:
     - type='massing', params={footprint:[[0,0,0],[30000,0,0],[30000,18000,0],[0,18000,0]], levels:4, level_height:3600}
@@ -878,7 +623,7 @@ async def create_object(params: CreateObjectInput) -> dict:
 
 @mcp.tool(name="transform_objects", annotations=WR)
 async def transform_objects(params: TransformObjectsInput) -> dict:
-    """Universal transform tool Ã¢â‚¬â€ replaces move/rotate/scale/mirror/array.
+    """Universal transform tool — replaces move/rotate/scale/mirror/array.
 
     For one transform, use shorthand fields. For chained transforms, use operations[]:
     each op's output object_ids feed the next, so you can move-then-array in a single call.
@@ -926,20 +671,20 @@ async def batch(params: BatchCommandInput) -> dict:
     return await _exec_batch(raw_commands, atomic=params.atomic, stop_on_error=params.stop_on_error)
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Architect intelligence layer Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Architect intelligence layer Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="derive_floors_from_mass", annotations=WR)
 async def derive_floors_from_mass(params: DeriveFloorsFromMassInput) -> dict:
     """Section a massing solid at floor heights and extrude each section into a slab.
 
     Variable level_heights[] for non-uniform floor heights (e.g. taller ground floor).
-    Pair with create_object(type='massing') in a batch Ã¢â‚¬â€ chain via $1.mass_id."""
+    Pair with create_object(type='massing') in a batch — chain via $1.mass_id."""
     return await _exec_simple("derive_floors_from_mass", params.model_dump(exclude_none=True))
 
 
 @mcp.tool(name="create_core", annotations=WR)
 async def create_core(params: CreateCoreInput) -> dict:
-    """Create a building core as a unit Ã¢â‚¬â€ perimeter walls plus lift, stair, and shaft modules.
+    """Create a building core as a unit — perimeter walls plus lift, stair, and shaft modules.
 
     Optional punch_through[] subtracts the core modules from listed massing solids,
     carving the actual voids in your floor stack."""
@@ -969,7 +714,7 @@ async def report_areas(params: ReportAreasInput) -> dict:
     return await _exec_simple("report_areas", params.model_dump())
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Layers Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Layers Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="create_layer", annotations=WI)
 async def create_layer(params: LayerInput) -> dict:
@@ -989,7 +734,7 @@ async def batch_layer_visibility(params: BatchLayerVisInput) -> dict:
     return await _exec_simple("batch_layer_visibility", params.model_dump(exclude_none=True))
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Analysis Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Analysis Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="measure_object", annotations=RO)
 async def measure_object(params: ObjectIdInput) -> dict:
@@ -1015,13 +760,13 @@ async def validate_objects(params: ValidateInput) -> dict:
     return await _exec_simple("validate_objects", params.model_dump())
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Viewport Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Viewport Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="capture_viewport", annotations=RO)
 async def capture_viewport(params: CaptureInput) -> dict:
     """Capture the active viewport as JPEG (default for shaded) or PNG (default for wireframe).
 
-    Phase 1 Ã¢â‚¬â€ no disk round-trip. format='auto' picks based on display mode.
+    Phase 1 — no disk round-trip. format='auto' picks based on display mode.
     restore_state=True (default) saves and restores the viewport camera + display mode after
     capture, so inspecting the model from any angle never disrupts the user's current view.
     Pass view= and/or display_mode= to temporarily switch before capturing."""
@@ -1052,7 +797,7 @@ async def set_camera(params: SetCameraInput) -> dict:
 
     Two modes:
     1. Explicit: supply location + target (+ optional lens_length, projection).
-    2. Bbox framing: supply box_min + box_max Ã¢â‚¬â€ the plugin auto-computes a camera distance
+    2. Bbox framing: supply box_min + box_max — the plugin auto-computes a camera distance
        that fits the bounding box in the viewport.
 
     Examples:
@@ -1070,11 +815,11 @@ async def get_rhino_commands(params: GetRhinoCommandsInput) -> dict:
     return await _exec_simple("get_rhino_commands", params.model_dump())
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Geometry ops Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Geometry ops Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="get_cross_section", annotations=WR)
 async def get_cross_section(params: CrossSectionInput) -> dict:
-    """Cut a solid at a Z height and return section curves Ã¢â‚¬â€ useful for plan views."""
+    """Cut a solid at a Z height and return section curves — useful for plan views."""
     return await _exec_simple("get_cross_section", params.model_dump(exclude_none=True))
 
 
@@ -1089,11 +834,11 @@ async def delete_objects(params: DeleteInput) -> dict:
     """Delete objects by GUID or selector string: 'all', 'by_layer:Layer', 'by_name:Pattern', 'selected'."""
     return await _exec_simple("delete_objects", params.model_dump())
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Escape hatches Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Escape hatches Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="execute_script", annotations=WR)
 async def execute_script(params: ScriptInput) -> dict:
-    """Run arbitrary Python 3 inside Rhino. Powerful escape hatch Ã¢â‚¬â€ prefer structured tools.
+    """Run arbitrary Python 3 inside Rhino. Powerful escape hatch — prefer structured tools.
 
     Auto-imported preamble: rhinoscriptsyntax as rs, scriptcontext as sc, Rhino, System.
     Use undo_name to wrap in an undo record."""
@@ -1112,11 +857,11 @@ async def get_log(params: LogInput) -> dict:
     return await _exec_simple("get_log", params.model_dump())
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Materials Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Materials Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="set_layer_material", annotations=WI)
 async def set_layer_material(params: LayerMaterialInput) -> dict:
-    """Set PBR material properties on a layer Ã¢â‚¬â€ color, roughness, metallic, opacity, emission.
+    """Set PBR material properties on a layer — color, roughness, metallic, opacity, emission.
 
     Updates both the layer display color and the render material (Rendered/Arctic/Raytraced).
 
@@ -1127,14 +872,14 @@ async def set_layer_material(params: LayerMaterialInput) -> dict:
     return await _exec_simple("set_layer_material", params.model_dump(exclude_none=True))
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Native commands Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Native commands Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 @mcp.tool(name="run_command", annotations=WR)
 async def run_command(params: RunCommandInput) -> dict:
     """Execute any Rhino command string via RhinoApp.RunScript.
 
     Escape hatch for commands not covered by structured tools. Tracks newly created objects.
-    Prefer structured tools when available Ã¢â‚¬â€ run_command has no rollback guarantee.
+    Prefer structured tools when available — run_command has no rollback guarantee.
 
     Examples:
         run_command(command="_Contour _SelAll _Enter 0,0,0 0,0,1 3000")
@@ -1143,7 +888,7 @@ async def run_command(params: RunCommandInput) -> dict:
     return await _exec_simple("run_command", params.model_dump())
 
 
-# Ã¢â€â‚¬Ã¢â€â‚¬ Entry point Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+# Ã¢"â‚¬Ã¢"â‚¬ Entry point Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬Ã¢"â‚¬
 
 
 
@@ -1534,10 +1279,255 @@ async def get_trace_layers(layer_prefix: str = "Traced") -> str:
     return json.dumps(await _exec_simple("get_trace_layers", {"layer_prefix": layer_prefix}))
 
 
-def main():
-    """Entry point for the rhino-architect MCP server (called by pyproject.toml script)."""
-    mcp.run()
+# =============================================================================
+# DESIGN MEMORY TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def set_design_brief(brief: str) -> str:
+    """Store the project design brief inside the Rhino file (.3dm UserData).
+
+    Call this at the start of any significant design session. The brief persists
+    in the .3dm file and survives save/reload. Include: building type, program,
+    key constraints, structural approach, client requirements.
+    """
+    return json.dumps(await _exec_simple("set_design_brief", {"brief": brief}))
 
 
-if __name__ == "__main__":
-    main()
+@mcp.tool()
+async def get_design_brief() -> str:
+    """Retrieve the project design brief and global design rules stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_design_brief", {}))
+
+
+@mcp.tool()
+async def tag_object(ids: list[str], tags: dict) -> str:
+    """Write metadata tags to one or more Rhino objects (stored in UserDictionary, persists in .3dm).
+
+    Useful tag keys:
+      ai_group    -- logical group name (e.g. 'tower_core_level_3')
+      ai_rule     -- regeneration rule (e.g. 'concrete 300mm, 8.4m bay')
+      ai_label    -- human-readable label
+      ai_relations -- JSON string: {"children": ["id1", "id2"], "parent": "id0"}
+    """
+    return json.dumps(await _exec_simple("tag_object", {"ids": ids, "tags": tags}))
+
+
+@mcp.tool()
+async def get_provenance(id: str) -> str:
+    """Get the full creation context (provenance) for a Rhino object.
+
+    Returns: which tool created it, with what parameters, in which session.
+    Answers: 'why does this object exist?' and 'how was it created?'
+    All AI-created objects are auto-tagged at creation time.
+    """
+    return json.dumps(await _exec_simple("get_provenance", {"id": id}))
+
+
+@mcp.tool()
+async def search_memory(query: str) -> str:
+    """Search the design memory for objects, rules, groups, and sessions matching a keyword.
+
+    Searches across: design brief, session logs, named groups, and all object tags.
+    Returns matching results with source and context (max 50 hits).
+    Example queries: 'tower core', 'concrete 300mm', 'facade A', 'level 3 columns'.
+    """
+    return json.dumps(await _exec_simple("search_memory", {"query": query}))
+
+
+@mcp.tool()
+async def get_related_objects(id: str, relation: str = "") -> str:
+    """Get objects related to a given object via stored ai_relations tags.
+
+    relation: 'parent', 'children', 'mirrors', 'group', or '' for all relations.
+    Example: get all windows that belong to a specific facade wall.
+    """
+    return json.dumps(await _exec_simple("get_related_objects", {"id": id, "relation": relation}))
+
+
+@mcp.tool()
+async def name_group(name: str, ids: list[str]) -> str:
+    """Create or update a named group of objects stored in the Rhino file.
+
+    Named groups persist in the .3dm file. Use to label sets of objects:
+    'tower_core', 'north_facade', 'level_3_columns'. Retrieve with get_group.
+    """
+    return json.dumps(await _exec_simple("name_group", {"name": name, "ids": ids}))
+
+
+@mcp.tool()
+async def get_group(name: str) -> str:
+    """Get the object IDs belonging to a named group stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_group", {"name": name}))
+
+
+@mcp.tool()
+async def get_all_groups() -> str:
+    """List all named groups and their member object IDs stored in the Rhino file."""
+    return json.dumps(await _exec_simple("get_all_groups", {}))
+
+
+@mcp.tool()
+async def add_design_rule(rule: str) -> str:
+    """Add a global design rule to the project memory (persists in .3dm file).
+
+    Rules guide future generation decisions. Examples:
+      'bay spacing must be 8400mm'
+      'concrete walls 300mm thick'
+      'floor-to-floor height 3500mm'
+      'no windows below 900mm sill height'
+    """
+    return json.dumps(await _exec_simple("add_design_rule", {"rule": rule}))
+
+
+@mcp.tool()
+async def log_session(summary: str) -> str:
+    """Log a summary of the current AI session to the project memory (persists in .3dm).
+
+    Call at the end of a work session with a brief description of what was done.
+    Logs persist in the .3dm file and provide context for future sessions.
+    """
+    return json.dumps(await _exec_simple("log_session", {"summary": summary}))
+
+
+# =============================================================================
+# INCREMENTAL SCENE SYNC TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def get_scene_diff(from_version: int) -> str:
+    """Get what changed in the Rhino scene since a specific version number.
+
+    Returns arrays of added, deleted, and modified object refs.
+    Use at the start of every session to catch up cheaply instead of
+    re-querying the full scene. Get current version from ping or get_tracker_version.
+
+    WHEN TO USE: much faster than get_scene_summary on large models --
+    only returns what changed, not everything.
+    """
+    return json.dumps(await _exec_simple("get_scene_diff", {"from_version": from_version}))
+
+
+@mcp.tool()
+async def get_change_log(limit: int = 50, since_version: int = 0) -> str:
+    """Get the chronological log of recent scene change events.
+
+    Returns change events (added/deleted/modified) with timestamps and version numbers.
+    Useful for understanding the sequence of recent edits or auditing a session.
+    Max limit: 200 events.
+    """
+    return json.dumps(await _exec_simple("get_change_log", {
+        "limit": limit, "since_version": since_version
+    }))
+
+
+@mcp.tool()
+async def get_tracker_version() -> str:
+    """Get the current change tracker version number.
+
+    Workflow: store this version, do work or wait for user edits,
+    then call get_scene_diff(from_version=stored_version) to see what changed.
+    """
+    return json.dumps(await _exec_simple("get_tracker_version", {}))
+
+
+# =============================================================================
+# SEMANTIC SCENE INTELLIGENCE TOOLS
+# =============================================================================
+
+@mcp.tool()
+async def analyze_architecture() -> str:
+    """Run a full semantic analysis of the Rhino scene.
+
+    Classifies all geometry into architectural types: walls, slabs, columns,
+    cores, facade panels, openings, stairs, massing. Detects floor levels by
+    clustering Z-positions of flat geometry. Detects structural grid from
+    column centroid positions.
+
+    Returns: level count, system breakdown (counts + IDs), detected grid spacing,
+    unclassified geometry ratio.
+
+    Result is CACHED against scene_version -- calling twice costs almost nothing
+    if the scene has not changed. Force refresh by modifying the scene.
+    """
+    return json.dumps(await _exec_simple("analyze_architecture", {}))
+
+
+@mcp.tool()
+async def get_building_systems(system: str = "all") -> str:
+    """Get objects grouped by architectural building system.
+
+    system options:
+      'structure'   -- columns, slabs, cores
+      'envelope'    -- walls, facade panels
+      'openings'    -- windows, doors
+      'circulation' -- stairs, ramps
+      'all'         -- everything (default)
+
+    Each object includes: id, level index, layer, bounding box size [dx, dy, dz] in mm.
+    Call analyze_architecture first for an overview, then drill into systems.
+    """
+    return json.dumps(await _exec_simple("get_building_systems", {"system": system}))
+
+
+@mcp.tool()
+async def get_level_summary(level: int = -1) -> str:
+    """Get a summary of one or all detected floor levels in the model.
+
+    level: floor index (0 = ground floor), or -1 for all levels (default).
+    Returns per level: elevation (mm), object count, count by architectural type.
+    Levels are auto-detected by clustering the Z-positions of flat geometry.
+    """
+    params = {"level": level} if level >= 0 else {}
+    return json.dumps(await _exec_simple("get_level_summary", params))
+
+
+@mcp.tool()
+async def detect_design_patterns() -> str:
+    """Detect repeating design patterns in the Rhino model.
+
+    Finds:
+      - Structural grid: dominant X/Y spacing from column centroid positions
+      - Repeated modules: bounding-box sizes that appear 3+ times
+      - Level count and detected floor heights
+
+    Use before adding new elements to understand the existing design logic
+    (bay spacing, grid, typical element sizes) so you can match them.
+    """
+    return json.dumps(await _exec_simple("detect_design_patterns", {}))
+
+
+@mcp.tool()
+async def find_unassigned_geometry(min_volume: float = 0.0) -> str:
+    """Find geometry that couldn't be classified into any architectural system.
+
+    min_volume: minimum bounding box volume in mm^3 to filter tiny objects (default: 0 = all).
+    Returns objects with layer and bounding box size [dx, dy, dz].
+
+    Use to review orphaned geometry, decide what to do with it (tag it,
+    assign to a layer, delete it, or reclassify it).
+    """
+    return json.dumps(await _exec_simple("find_unassigned_geometry", {"min_volume": min_volume}))
+
+
+# =============================================================================
+# SMART BATCHING -- PREVIEW
+# =============================================================================
+
+@mcp.tool()
+async def batch_preview(commands: list[dict]) -> str:
+    """Validate a batch plan without executing any commands (dry run, zero mutations).
+
+    Checks each step:
+      - Is it a known command?
+      - Are  paths (, .object_ids, .object_ids[0]) forward-reference-free?
+      - Are there destructive commands that need extra care?
+      - Which steps involve viewport captures (consider capture_at_end)?
+
+    Returns per-step status (valid/invalid/warning), estimated creates/deletes,
+    and all warnings. Completely safe to call at any time -- does NOT modify Rhino.
+
+    WHEN TO USE: before any complex or destructive batch, especially those with
+    many  chains or boolean operations.
+    """
+    return json.dumps(await _exec_simple("batch_preview", {"commands": commands}))
