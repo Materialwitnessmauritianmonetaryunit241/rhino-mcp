@@ -59,12 +59,12 @@ namespace RhinoAIBridge
                     catch { }
                 }
 
-                // Roughness stored in Emap slot
+                // Roughness stored in PBR_Roughness slot
                 string roughnessPath = maps["roughness"]?.ToString();
                 if (!string.IsNullOrEmpty(roughnessPath) && File.Exists(roughnessPath))
                 {
                     var tex = BuildTexture(roughnessPath, uvRepeat);
-                    mat.SetTexture(tex, TextureType.Emap);
+                    mat.SetTexture(tex, TextureType.PBR_Roughness);
                     mapsApplied.Add("roughness");
                 }
 
@@ -77,12 +77,12 @@ namespace RhinoAIBridge
                     mapsApplied.Add("normal");
                 }
 
-                // Metallic stored in Transparency slot
+                // Metallic stored in PBR_Metallic slot
                 string metallicPath = maps["metallic"]?.ToString();
                 if (!string.IsNullOrEmpty(metallicPath) && File.Exists(metallicPath))
                 {
                     var tex = BuildTexture(metallicPath, uvRepeat);
-                    mat.SetTexture(tex, TextureType.Transparency);
+                    mat.SetTexture(tex, TextureType.PBR_Metallic);
                     mapsApplied.Add("metallic");
                 }
 
@@ -95,12 +95,12 @@ namespace RhinoAIBridge
                     mapsApplied.Add("ao");
                 }
 
-                // Displacement stored in Opacity slot (no dedicated basic-mat slot)
+                // Displacement stored in PBR_Displacement slot
                 string dispPath = maps["displacement"]?.ToString();
                 if (!string.IsNullOrEmpty(dispPath) && File.Exists(dispPath))
                 {
                     var tex = BuildTexture(dispPath, uvRepeat);
-                    mat.SetTexture(tex, TextureType.Opacity);
+                    mat.SetTexture(tex, TextureType.PBR_Displacement);
                     mapsApplied.Add("displacement");
                 }
 
@@ -367,12 +367,12 @@ namespace RhinoAIBridge
                 // use explicit structs to stay safe.
                 var textureSlots = new TextureSlotInfo[]
                 {
-                    new TextureSlotInfo(TextureType.Bitmap,       "albedo"),
-                    new TextureSlotInfo(TextureType.Bump,         "normal_or_bump"),
-                    new TextureSlotInfo(TextureType.Emap,         "roughness"),
-                    new TextureSlotInfo(TextureType.Transparency, "metallic"),
-                    new TextureSlotInfo(TextureType.PBR_AmbientOcclusion,      "ao"),
-                    new TextureSlotInfo(TextureType.Opacity,      "displacement"),
+                    new TextureSlotInfo(TextureType.Bitmap,               "albedo"),
+                    new TextureSlotInfo(TextureType.Bump,                 "normal_or_bump"),
+                    new TextureSlotInfo(TextureType.PBR_Roughness,        "roughness"),
+                    new TextureSlotInfo(TextureType.PBR_Metallic,         "metallic"),
+                    new TextureSlotInfo(TextureType.PBR_AmbientOcclusion, "ao"),
+                    new TextureSlotInfo(TextureType.PBR_Displacement,     "displacement"),
                 };
 
                 double uvRepeatU = 1.0;
@@ -498,7 +498,10 @@ namespace RhinoAIBridge
             tex.FileName     = filePath;
             tex.WrapU        = Rhino.DocObjects.TextureUvwWrapping.Repeat;
             tex.WrapV        = Rhino.DocObjects.TextureUvwWrapping.Repeat;
-            tex.UvwTransform = Transform.Scale(Point3d.Origin, uvRepeat);
+            var uvXf = Transform.Identity;
+            uvXf.M00 = uvRepeat;
+            uvXf.M11 = uvRepeat;
+            tex.UvwTransform = uvXf;
             return tex;
         }
 
@@ -515,10 +518,10 @@ namespace RhinoAIBridge
             {
                 TextureType.Bitmap,
                 TextureType.Bump,
-                TextureType.Emap,
-                TextureType.Transparency,
+                TextureType.PBR_Roughness,
+                TextureType.PBR_Metallic,
                 TextureType.PBR_AmbientOcclusion,
-                TextureType.Opacity
+                TextureType.PBR_Displacement
             };
 
             foreach (var slot in slots)
@@ -530,7 +533,9 @@ namespace RhinoAIBridge
 
                 if (scaleMult.HasValue)
                 {
-                    Transform scaleXf = Transform.Scale(Point3d.Origin, scaleMult.Value);
+                    var scaleXf = Transform.Identity;
+                    scaleXf.M00 = scaleMult.Value;
+                    scaleXf.M11 = scaleMult.Value;
                     current = scaleXf * current;
                 }
 

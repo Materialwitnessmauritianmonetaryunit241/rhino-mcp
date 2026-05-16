@@ -353,6 +353,12 @@ namespace RhinoAIBridge
                 Plane plane = Plane.WorldXY;
                 plane.Origin = new Point3d(cx, cy, z);
 
+                // Full circle: Arc struct rejects 2π span — use Circle directly
+                if (Math.Abs((endRad - startRad) - 2 * Math.PI) < 1e-4 || Math.Abs(endDeg - startDeg - 360.0) < 1e-3)
+                {
+                    doc.Objects.AddCurve(new ArcCurve(new Circle(plane, r)), MakeAttrs(layerIdx));
+                    return true;
+                }
                 var arc = new Arc(new Circle(plane, r), new Interval(startRad, endRad));
                 if (!arc.IsValid) return false;
 
@@ -443,15 +449,15 @@ namespace RhinoAIBridge
                     plane.Rotate(rad, Vector3d.ZAxis);
                 }
 
-                // Use the document's first dim style; fall back to a default instance.
-                DimensionStyle dimStyle = doc.DimStyles.Count > 0
-                    ? doc.DimStyles[0]
-                    : new DimensionStyle();
+                // Use the document's first dim style; ensure at least one exists.
+                if (doc.DimStyles.Count == 0)
+                    doc.DimStyles.Add("Default", false);
+                DimensionStyle dimStyle = doc.DimStyles[0];
 
                 // TextEntity.Create(text, plane, dimStyle, wrapped, rectWidth, rotationRadians)
                 TextEntity te = TextEntity.Create(content, plane, dimStyle, false, 0.0, 0.0);
-                if (te != null) te.TextHeight = Math.Max(0.1, height);
                 if (te == null) return false;
+                te.TextHeight = Math.Max(0.1, height);
 
                 doc.Objects.AddText(te, MakeAttrs(layerIdx));
                 return true;

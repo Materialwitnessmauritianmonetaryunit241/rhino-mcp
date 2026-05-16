@@ -123,7 +123,10 @@ def _merge_collinear_segments(segments, angle_tol_deg=2.0, dist_tol_px=5.0):
         for s in group:
             projs.extend([project_t(s[0], s[1], si), project_t(s[2], s[3], si)])
         t_min, t_max = min(projs), max(projs)
-        if t_max - t_min < length + dist_tol_px * 2:
+        # Merge if the group spans <= sum of individual lengths + gap tolerance
+        # (i.e. segments overlap or are close together on the axis)
+        total_individual = sum(math.hypot(s[2]-s[0], s[3]-s[1]) for s in group)
+        if t_max - t_min <= total_individual + dist_tol_px * len(group):
             x1n = si[0] + ux * t_min;  y1n = si[1] + uy * t_min
             x2n = si[0] + ux * t_max;  y2n = si[1] + uy * t_max
             avg_conf = sum(s[4] for s in group) / len(group)
@@ -337,7 +340,8 @@ def _detect_arcs(gray, binary, img_h, dpi, model_unit, is_scanned):
         conf = _circle_confidence(binary, int(cx), int(cy), int(r)) * conf_scale
         if conf < 0.4:
             continue
-        angles = np.degrees(np.arctan2(pts[:, 1] - cy, pts[:, 0] - cx))
+        # Negate Y component to account for image-space Y-down -> model-space Y-up flip
+        angles = np.degrees(np.arctan2(-(pts[:, 1] - cy), pts[:, 0] - cx))
         a_min, a_max = float(np.min(angles)), float(np.max(angles))
         if a_max - a_min < 20:
             continue
@@ -422,11 +426,10 @@ def _extract_vector_text(page, page_h_pt, img_h, dpi, model_unit):
                 if not text:
                     continue
                 ox, oy = span["origin"]
-                # PDF Y: 0 at top in fitz rects; origin is baseline
+                # PyMuPDF origin is top-left, Y increases downward — same as image coords
                 px = ox * scale
-                py = (page_h_pt - oy) * scale
-                mx = px * factor
-                my = py * factor
+                py = oy * scale  # PyMuPDF origin is top-left, Y increases downward — same as image coords
+                mx, my = _px_to_model(px, py, img_h, dpi, model_unit)
                 size_pt = span.get("size", 12.0)
                 height_m = size_pt * (25.4 / 72.0) / _UNIT_TO_MM.get(model_unit, 1.0)
                 d = line.get("dir", (1.0, 0.0))
@@ -481,7 +484,6 @@ def render_page_preview(pdf_path, page_number=0, max_size=800):
         scale = min(max_size / max(r.width, r.height), 2.0)
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         doc.close()
-        import base64
         return base64.b64encode(pix.tobytes("png")).decode("ascii")
     except Exception:
         return None

@@ -372,9 +372,9 @@ namespace RhinoAIBridge
             try
             {
                 string displayModeName = p["display_mode"]?.ToString();
-                int    width           = p["width"]  != null ? (int)p["width"]  : 1600;
-                int    height          = p["height"] != null ? (int)p["height"] : 1200;
-                bool   restoreMode     = p["restore_mode"] == null || (bool)p["restore_mode"];
+                int    width           = p["width"]?.ToObject<int>()  ?? 1600;
+                int    height          = p["height"]?.ToObject<int>() ?? 1200;
+                bool   restoreMode     = p["restore_mode"] == null || p["restore_mode"].ToObject<bool>();
                 string styleNotes      = p["style_notes"]?.ToString();
 
                 var view = doc.Views.ActiveView;
@@ -448,13 +448,13 @@ namespace RhinoAIBridge
         {
             TryOverlay(p, d, "background_color",     v => v.ToString());
             TryOverlay(p, d, "edge_color",           v => v.ToString());
-            TryOverlay(p, d, "edge_thickness",       v => (int)v);
-            TryOverlay(p, d, "silhouette_thickness", v => (int)v);
-            TryOverlay(p, d, "show_edges",           v => (bool)v);
-            TryOverlay(p, d, "show_silhouettes",     v => (bool)v);
-            TryOverlay(p, d, "show_interior_edges",  v => (bool)v);
-            TryOverlay(p, d, "shading_enabled",      v => (bool)v);
-            TryOverlay(p, d, "use_object_color",     v => (bool)v);
+            TryOverlay(p, d, "edge_thickness",       v => v.ToObject<int>());
+            TryOverlay(p, d, "silhouette_thickness", v => v.ToObject<int>());
+            TryOverlay(p, d, "show_edges",           v => v.ToObject<bool>());
+            TryOverlay(p, d, "show_silhouettes",     v => v.ToObject<bool>());
+            TryOverlay(p, d, "show_interior_edges",  v => v.ToObject<bool>());
+            TryOverlay(p, d, "shading_enabled",      v => v.ToObject<bool>());
+            TryOverlay(p, d, "use_object_color",     v => v.ToObject<bool>());
         }
 
         private static void TryOverlay(JObject p, Dictionary<string, object> d,

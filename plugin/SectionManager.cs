@@ -262,9 +262,9 @@ namespace RhinoAIBridge
                 if (layer.UserDictionary.ContainsKey("view_dir_x"))
                 {
                     viewDir = new Vector3d(
-                        (double)layer.UserDictionary["view_dir_x"],
-                        (double)layer.UserDictionary["view_dir_y"],
-                        (double)layer.UserDictionary["view_dir_z"]);
+                        layer.UserDictionary.TryGetDouble("view_dir_x", out double vdx) ? vdx : 0.0,
+                        layer.UserDictionary.TryGetDouble("view_dir_y", out double vdy) ? vdy : 0.0,
+                        layer.UserDictionary.TryGetDouble("view_dir_z", out double vdz) ? vdz : 0.0);
                 }
                 else
                 {
@@ -288,13 +288,13 @@ namespace RhinoAIBridge
                 if (layer.UserDictionary.ContainsKey("start_x"))
                 {
                     Point3d start = new Point3d(
-                        (double)layer.UserDictionary["start_x"],
-                        (double)layer.UserDictionary["start_y"],
-                        (double)layer.UserDictionary["start_z"]);
+                        layer.UserDictionary.TryGetDouble("start_x", out double sx) ? sx : 0.0,
+                        layer.UserDictionary.TryGetDouble("start_y", out double sy) ? sy : 0.0,
+                        layer.UserDictionary.TryGetDouble("start_z", out double sz) ? sz : 0.0);
                     Point3d end = new Point3d(
-                        (double)layer.UserDictionary["end_x"],
-                        (double)layer.UserDictionary["end_y"],
-                        (double)layer.UserDictionary["end_z"]);
+                        layer.UserDictionary.TryGetDouble("end_x", out double ex) ? ex : 0.0,
+                        layer.UserDictionary.TryGetDouble("end_y", out double ey) ? ey : 0.0,
+                        layer.UserDictionary.TryGetDouble("end_z", out double ez) ? ez : 0.0);
                     planeOrigin = (start + end) / 2.0;
                 }
                 else if (secLine.Length > RhinoMath.ZeroTolerance)
@@ -319,7 +319,9 @@ namespace RhinoAIBridge
                 RemoveExistingClippingPlane(doc, cpKey);
 
                 // Create new clipping plane
-                var viewport = doc.Views.ActiveView.ActiveViewport;
+                var activeView = doc.Views.ActiveView;
+                if (activeView == null) return new JObject { ["status"] = "error", ["message"] = "No active viewport." };
+                var viewport = activeView.ActiveViewport;
                 Guid viewportId = viewport.Id;
                 Guid cpId = doc.Objects.AddClippingPlane(sectionPlane, magnitude, magnitude, new Guid[] { viewportId });
 
@@ -387,20 +389,20 @@ namespace RhinoAIBridge
                         if (layer.UserDictionary.ContainsKey("view_dir_x"))
                         {
                             viewDir = new Vector3d(
-                                (double)layer.UserDictionary["view_dir_x"],
-                                (double)layer.UserDictionary["view_dir_y"],
-                                (double)layer.UserDictionary["view_dir_z"]);
+                                layer.UserDictionary.TryGetDouble("view_dir_x", out double vdx2) ? vdx2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("view_dir_y", out double vdy2) ? vdy2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("view_dir_z", out double vdz2) ? vdz2 : 0.0);
                         }
                         if (layer.UserDictionary.ContainsKey("start_x"))
                         {
                             Point3d s = new Point3d(
-                                (double)layer.UserDictionary["start_x"],
-                                (double)layer.UserDictionary["start_y"],
-                                (double)layer.UserDictionary["start_z"]);
+                                layer.UserDictionary.TryGetDouble("start_x", out double sx2) ? sx2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("start_y", out double sy2) ? sy2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("start_z", out double sz2) ? sz2 : 0.0);
                             Point3d e = new Point3d(
-                                (double)layer.UserDictionary["end_x"],
-                                (double)layer.UserDictionary["end_y"],
-                                (double)layer.UserDictionary["end_z"]);
+                                layer.UserDictionary.TryGetDouble("end_x", out double ex2) ? ex2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("end_y", out double ey2) ? ey2 : 0.0,
+                                layer.UserDictionary.TryGetDouble("end_z", out double ez2) ? ez2 : 0.0);
                             planeOrigin = (s + e) / 2.0;
                         }
                     }
@@ -421,7 +423,9 @@ namespace RhinoAIBridge
                 // (camera location is behind the section, looking through the cut)
                 Point3d camLocation = target + (-viewDir) * (bboxDiag * 2.0);
 
-                var vp = doc.Views.ActiveView.ActiveViewport;
+                var activeView = doc.Views.ActiveView;
+                if (activeView == null) return new JObject { ["status"] = "error", ["message"] = "No active viewport." };
+                var vp = activeView.ActiveViewport;
                 vp.ChangeToParallelProjection(true);
                 vp.CameraUp = Vector3d.ZAxis;
                 vp.SetCameraLocations(target, camLocation);
@@ -494,8 +498,10 @@ namespace RhinoAIBridge
 
                 // Cut height: default 1200mm above floor in model units
                 double cutHeightModel = ConvertToModelUnits(doc, 1200);
-                if (p["cut_height"] != null)
-                    cutHeightModel = (double)p["cut_height"];
+                if (p["cut_height_mm"] != null)
+                    cutHeightModel = ConvertToModelUnits(doc, p["cut_height_mm"].ToObject<double>());
+                else if (p["cut_height"] != null)
+                    cutHeightModel = p["cut_height"].ToObject<double>(); // already in model units
 
                 double cutZ = floorZ + cutHeightModel;
 
@@ -510,7 +516,9 @@ namespace RhinoAIBridge
                 string cpKey = $"ai:plan:floor_{floorIndex:D2}:clipping_plane_id";
                 RemoveExistingClippingPlane(doc, cpKey);
 
-                var viewport = doc.Views.ActiveView.ActiveViewport;
+                var planActiveView = doc.Views.ActiveView;
+                if (planActiveView == null) return new JObject { ["status"] = "error", ["message"] = "No active viewport." };
+                var viewport = planActiveView.ActiveViewport;
                 Guid viewportId = viewport.Id;
                 Guid cpId = doc.Objects.AddClippingPlane(planePlane, magnitude, magnitude, new Guid[] { viewportId });
 
@@ -708,19 +716,25 @@ namespace RhinoAIBridge
 
                 // Retrieve old points from user dictionary
                 Point3d oldStart = layer.UserDictionary.ContainsKey("start_x")
-                    ? new Point3d((double)layer.UserDictionary["start_x"], (double)layer.UserDictionary["start_y"], (double)layer.UserDictionary["start_z"])
+                    ? new Point3d(
+                        layer.UserDictionary.TryGetDouble("start_x", out double osx) ? osx : 0.0,
+                        layer.UserDictionary.TryGetDouble("start_y", out double osy) ? osy : 0.0,
+                        layer.UserDictionary.TryGetDouble("start_z", out double osz) ? osz : 0.0)
                     : Point3d.Origin;
 
                 Point3d oldEnd = layer.UserDictionary.ContainsKey("end_x")
-                    ? new Point3d((double)layer.UserDictionary["end_x"], (double)layer.UserDictionary["end_y"], (double)layer.UserDictionary["end_z"])
+                    ? new Point3d(
+                        layer.UserDictionary.TryGetDouble("end_x", out double oex) ? oex : 0.0,
+                        layer.UserDictionary.TryGetDouble("end_y", out double oey) ? oey : 0.0,
+                        layer.UserDictionary.TryGetDouble("end_z", out double oez) ? oez : 0.0)
                     : Point3d.Origin;
 
                 string viewSide = "left";
                 if (layer.UserDictionary.ContainsKey("view_dir_x"))
                 {
                     var vd = new Vector3d(
-                        (double)layer.UserDictionary["view_dir_x"],
-                        (double)layer.UserDictionary["view_dir_y"],
+                        layer.UserDictionary.TryGetDouble("view_dir_x", out double uvdx) ? uvdx : 0.0,
+                        layer.UserDictionary.TryGetDouble("view_dir_y", out double uvdy) ? uvdy : 0.0,
                         0);
                     // determine side: if vd is left-perpendicular, side=left
                     // We just preserve the existing direction by passing it through
@@ -796,14 +810,41 @@ namespace RhinoAIBridge
                     found = true;
 
                     // Remove clipping plane
-                    string cpKey = prefix == "Section-"
-                        ? $"ai:section:{label}:clipping_plane_id"
-                        : prefix == "Elevation-"
-                        ? $"ai:elevation:{label}:clipping_plane_id"
-                        : $"ai:plan:floor_{label}:clipping_plane_id";
+                    string cpKey;
+                    if (prefix == "Section-")
+                    {
+                        cpKey = $"ai:section:{label}:clipping_plane_id";
+                    }
+                    else if (prefix == "Elevation-")
+                    {
+                        cpKey = $"ai:elevation:{label}:clipping_plane_id";
+                    }
+                    else
+                    {
+                        // Plan layers are stored with D2 format (e.g., "Plan-Floor-00").
+                        // Scan doc.Strings to find the matching clipping plane key.
+                        cpKey = null;
+                        for (int ki = 0; ki < 200; ki++)
+                        {
+                            string candidate = $"ai:plan:floor_{ki:D2}:clipping_plane_id";
+                            if (!string.IsNullOrEmpty(doc.Strings.GetValue(candidate)))
+                            {
+                                string layerCandidate = $"Plan-Floor-{ki:D2}";
+                                if (layerCandidate == layerName || ki.ToString() == label ||
+                                    (ki == 0 && (label == "ground" || label == "G")))
+                                {
+                                    cpKey = candidate;
+                                    break;
+                                }
+                            }
+                        }
+                    }
 
-                    RemoveExistingClippingPlane(doc, cpKey);
-                    doc.Strings.Delete(cpKey);
+                    if (!string.IsNullOrEmpty(cpKey))
+                    {
+                        RemoveExistingClippingPlane(doc, cpKey);
+                        doc.Strings.Delete(cpKey);
+                    }
 
                     // Delete objects then layer
                     DeleteLayerObjects(doc, layerIdx);

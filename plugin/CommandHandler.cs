@@ -2877,9 +2877,17 @@ namespace RhinoAIBridge
             double scaleFactor = knownInModelUnits / measuredDistance;
             var xform = Rhino.Geometry.Transform.Scale(Rhino.Geometry.Point3d.Origin, scaleFactor);
             int scaled = 0;
-            foreach (var obj in Doc.Objects)
+            var settings = new Rhino.DocObjects.ObjectEnumeratorSettings
             {
-                if (!obj.IsDeleted) { Doc.Objects.Transform(obj.Id, xform, true); scaled++; }
+                ActiveObjects = true,
+                DeletedObjects = false,
+            };
+            foreach (var obj in Doc.Objects.GetObjectList(settings))
+            {
+                if (obj.ObjectType == Rhino.DocObjects.ObjectType.ClipPlane) continue;
+                if (obj.ObjectType == Rhino.DocObjects.ObjectType.Light) continue;
+                Doc.Objects.Transform(obj.Id, xform, true);
+                scaled++;
             }
             Doc.Views.Redraw();
             return new JObject

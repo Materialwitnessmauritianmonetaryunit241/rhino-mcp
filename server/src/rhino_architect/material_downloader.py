@@ -171,8 +171,8 @@ def download_material(asset_id: str, resolution: str = "2K") -> dict:
 
     # Check cache — if any image files exist, treat as cached
     existing_images = [
-        f for f in cache_dir.iterdir()
-        if f.is_file() and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr"}
+        f for f in cache_dir.rglob("*")
+        if f.is_file() and f.suffix.lower() in {".png", ".jpg", ".jpeg", ".exr", ".tiff", ".tif"}
     ]
 
     info = get_material_info(asset_id)
