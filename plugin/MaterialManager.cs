@@ -278,21 +278,39 @@ namespace RhinoAIBridge
         {
             try
             {
+                bool dedupe  = p["dedupe"]?.ToObject<bool>() ?? false;
+                int  limit   = p["limit"]?.ToObject<int>()  ?? 500;
+                int  offset  = p["offset"]?.ToObject<int>() ?? 0;
+                bool inclObj = p["include_object_materials"]?.ToObject<bool>() ?? false;
+
                 // Build material-index to layer-names map
                 var layersByMat = new Dictionary<int, List<string>>();
                 foreach (Layer layer in doc.Layers)
                 {
                     if (layer == null || layer.IsDeleted) continue;
-                    int idx = layer.RenderMaterialIndex;
-                    if (idx >= 0)
+                    int idx2 = layer.RenderMaterialIndex;
+                    if (idx2 >= 0)
                     {
-                        if (!layersByMat.ContainsKey(idx))
-                            layersByMat[idx] = new List<string>();
-                        layersByMat[idx].Add(layer.FullPath);
+                        if (!layersByMat.ContainsKey(idx2))
+                            layersByMat[idx2] = new List<string>();
+                        layersByMat[idx2].Add(layer.FullPath);
                     }
                 }
 
-                var materialList = new JArray();
+                // Optionally collect per-object material indices
+                var objectMatIndices = new HashSet<int>();
+                if (inclObj)
+                {
+                    foreach (var obj in doc.Objects)
+                    {
+                        if (obj == null || obj.IsDeleted) continue;
+                        int mi = obj.Attributes.MaterialIndex;
+                        if (mi >= 0) objectMatIndices.Add(mi);
+                    }
+                }
+
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var materialList = new List<JObject>();
 
                 for (int i = 0; i < doc.Materials.Count; i++)
                 {
@@ -304,22 +322,36 @@ namespace RhinoAIBridge
 
                     List<string> assignedLayers;
                     layersByMat.TryGetValue(i, out assignedLayers);
+                    bool assignedToObject = objectMatIndices.Contains(i);
+
+                    // Dedup by name: skip if a material with same name already added
+                    if (dedupe && !string.IsNullOrEmpty(mat.Name))
+                    {
+                        if (!seen.Add(mat.Name)) continue;
+                    }
 
                     materialList.Add(new JObject
                     {
-                        ["index"]           = i,
-                        ["name"]            = mat.Name,
-                        ["diffuse_color"]   = ColorToHex(mat.DiffuseColor),
-                        ["has_texture"]     = hasTexture,
-                        ["assigned_layers"] = new JArray((assignedLayers ?? new List<string>()).Cast<object>().ToArray())
+                        ["index"]              = i,
+                        ["name"]               = mat.Name,
+                        ["diffuse_color"]      = ColorToHex(mat.DiffuseColor),
+                        ["has_texture"]        = hasTexture,
+                        ["assigned_layers"]    = new JArray((assignedLayers ?? new List<string>()).Cast<object>().ToArray()),
+                        ["assigned_to_object"] = assignedToObject,
                     });
                 }
+
+                int total = materialList.Count;
+                var page  = materialList.Skip(offset).Take(limit).ToList();
 
                 return new JObject
                 {
                     ["status"]    = "ok",
-                    ["count"]     = materialList.Count,
-                    ["materials"] = materialList
+                    ["total"]     = total,
+                    ["offset"]    = offset,
+                    ["limit"]     = limit,
+                    ["count"]     = page.Count,
+                    ["materials"] = new JArray(page.Cast<object>().ToArray()),
                 };
             }
             catch (Exception ex)

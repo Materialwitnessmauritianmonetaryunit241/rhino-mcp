@@ -149,5 +149,17 @@ namespace RhinoAIBridge
             if (e.Document == null) return;
             _snapshots.TryRemove(e.Document.RuntimeSerialNumber, out _);
         }
+
+        /// <summary>
+        /// Force-drop and immediately rebuild the snapshot for the active doc.
+        /// Use when the caller needs object counts to reflect the absolute current
+        /// state of the document (e.g. after a bulk import or external edit).
+        /// </summary>
+        public static SceneSnapshot ForceRebuild(RhinoDoc doc)
+        {
+            if (doc == null) return null;
+            _snapshots.TryRemove(doc.RuntimeSerialNumber, out _);
+            return GetOrBuild(doc);
+        }
     }
 }

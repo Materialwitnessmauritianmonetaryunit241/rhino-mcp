@@ -1,7 +1,7 @@
-// RhinoAIBridge v4.5 — AIBridgePlugin.cs
-// by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
+﻿// RhinoAIBridge v4.7 -- AIBridgePlugin.cs
 
 using System;
+using System.IO;
 using Rhino;
 using Rhino.PlugIns;
 
@@ -12,27 +12,24 @@ namespace RhinoAIBridge
         public AIBridgePlugin() { Instance = this; }
         public static AIBridgePlugin Instance { get; private set; }
 
+        private static readonly string DiagFile = Path.Combine(
+            Path.GetTempPath(), "aibridge_diag.txt");
+
+        private static void Diag(string msg)
+        {
+            try { File.AppendAllText(DiagFile, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n"); } catch { }
+        }
+
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
-            // Defer server start until Rhino's UI is fully idle.
-            // Starting in OnLoad is too early — the doc may not exist yet.
-            RhinoApp.Idle += OnIdle;
+            Diag("OnLoad called -- manual start only (type AIBridge to start)");
             RhinoApp.Closing += OnClosing;
             return LoadReturnCode.Success;
         }
 
-        private bool _started = false;
-        private void OnIdle(object sender, EventArgs e)
-        {
-            if (_started) return;
-            _started = true;
-            RhinoApp.Idle -= OnIdle;
-            try { AIBridgeServerController.StartServer(); }
-            catch (Exception ex) { RhinoApp.WriteLine($"AIBridge: auto-start failed — {ex.Message}"); }
-        }
-
         private void OnClosing(object sender, EventArgs e)
         {
+            Diag("OnClosing -- stopping server");
             try { AIBridgeServerController.StopServer(); } catch { }
         }
     }

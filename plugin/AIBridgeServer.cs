@@ -1,4 +1,4 @@
-// RhinoAIBridge v4.5 â€” AIBridgeServer.cs
+﻿// RhinoAIBridge v4.5 â€" AIBridgeServer.cs
 // by tanishqb | https://github.com/tanishqb/rhino-ai-bridge
 
 using System;
@@ -21,7 +21,7 @@ namespace RhinoAIBridge
 {
     /// <summary>
     /// TCP server. Length-prefixed JSON frames. One persistent UI-thread dispatcher
-    /// instead of one ManualResetEvent per call. Async accept loop â€” no Sleep(100) tax.
+    /// instead of one ManualResetEvent per call. Async accept loop â€" no Sleep(100) tax.
     /// </summary>
     public class AIBridgeServer
     {
@@ -34,7 +34,7 @@ namespace RhinoAIBridge
         private bool _running;
         private readonly CommandHandler _handler = new CommandHandler();
 
-        // Build hash captured once at startup â€” useful when 5 versions of the .rhp are on disk.
+        // Build hash captured once at startup â€" useful when 5 versions of the .rhp are on disk.
         public static string BuildHash { get; private set; } = ComputeBuildHash();
 
         public bool IsRunning => _running;
@@ -54,65 +54,95 @@ namespace RhinoAIBridge
             catch { return "unknown"; }
         }
 
+        private static void Diag(string msg)
+        {
+            try
+            {
+                var f = Path.Combine(Path.GetTempPath(), "aibridge_diag.txt");
+                System.IO.File.AppendAllText(f, $"[{DateTime.Now:HH:mm:ss.fff}] Server.{msg}\n");
+            }
+            catch { }
+        }
+
         public void Start()
         {
+            Diag("Start() called");
             lock (_lifecycleLock)
             {
-                if (_running) { RhinoApp.WriteLine("AIBridge: Already running"); return; }
-                _running = true;
-            }
-            AIBridgeLogger.Initialize();
-            UiDispatcher.Start();
-            // SceneSnapshot registry must be initialized BEFORE the listener accepts clients.
-            // Otherwise an early read tool could find a missing snapshot.
-            // Has to run on the UI thread because it touches RhinoDoc.ActiveDoc and subscribes to events.
-            try
-            {
-                if (RhinoApp.InvokeRequired)
-                    RhinoApp.InvokeOnUiThread(new Action(() => SceneSnapshotRegistry.Initialize()));
-                else
-                    SceneSnapshotRegistry.Initialize();
-            }
-            catch (Exception ex)
-            {
-                AIBridgeLogger.Log(LogLevel.ERROR, "Server", "Snapshot registry init failed", error: ex.ToString());
+                if (_running) { RhinoApp.WriteLine($"AIBridge: Already running on 127.0.0.1:{PORT}  build:{BuildHash}"); return; }
+                // NOTE: _running is NOT set here — only set after TCP listener opens successfully.
+                // This prevents getting stuck in a fake-running state if any init step throws.
             }
 
+            try
+            {
+                Diag("Calling AIBridgeLogger.Initialize");
+                AIBridgeLogger.Initialize();
 
-            try
-            {
-                if (RhinoApp.InvokeRequired)
-                    RhinoApp.InvokeOnUiThread(new Action(() => ChangeTracker.Initialize()));
-                else
-                    ChangeTracker.Initialize();
-            }
-            catch (Exception ctEx)
-            {
-                AIBridgeLogger.Log(LogLevel.ERROR, "Server", "ChangeTracker init failed", error: ctEx.ToString());
-            }
-            try
-            {
+                Diag("Calling UiDispatcher.Start");
+                UiDispatcher.Start();
+
+                // SceneSnapshot registry must be initialized BEFORE the listener accepts clients.
+                try
+                {
+                    if (RhinoApp.InvokeRequired)
+                        RhinoApp.InvokeOnUiThread(new Action(() => SceneSnapshotRegistry.Initialize()));
+                    else
+                        SceneSnapshotRegistry.Initialize();
+                }
+                catch (Exception ex)
+                {
+                    Diag($"SceneSnapshot init failed (non-fatal): {ex.Message}");
+                    AIBridgeLogger.Log(LogLevel.ERROR, "Server", "Snapshot registry init failed", error: ex.ToString());
+                }
+
+                try
+                {
+                    if (RhinoApp.InvokeRequired)
+                        RhinoApp.InvokeOnUiThread(new Action(() => ChangeTracker.Initialize()));
+                    else
+                        ChangeTracker.Initialize();
+                }
+                catch (Exception ctEx)
+                {
+                    Diag($"ChangeTracker init failed (non-fatal): {ctEx.Message}");
+                    AIBridgeLogger.Log(LogLevel.ERROR, "Server", "ChangeTracker init failed", error: ctEx.ToString());
+                }
+
+                Diag("Starting TcpListener");
                 _listener = new TcpListener(IPAddress.Parse("127.0.0.1"), PORT);
                 _listener.Start();
                 _cts = new CancellationTokenSource();
                 _ = Task.Run(() => AcceptLoop(_cts.Token));
 
+                // Mark running ONLY after TCP is confirmed open.
+                lock (_lifecycleLock) { _running = true; }
+                Diag($"TcpListener started on port {PORT} -- marking running");
+
+                // Run self-test and log results immediately.
+                try
+                {
+                    var st = _handler.SelfTest();
+                    Diag($"SelfTest: {st["message"]}");
+                    AIBridgeLogger.Log(st["status"]?.ToString() == "ok" ? LogLevel.INFO : LogLevel.WARN,
+                        "Server", $"SelfTest: {st["message"]}");
+                }
+                catch (Exception stEx) { Diag($"SelfTest threw: {stEx.Message}"); }
+
                 RhinoApp.WriteLine("==================================================");
-                RhinoApp.WriteLine("  Rhino AI Bridge v4.5 (C#)");
+                RhinoApp.WriteLine("  Rhino AI Bridge v4.7 (C#)");
                 RhinoApp.WriteLine($"  Listening on 127.0.0.1:{PORT}  build:{BuildHash}");
-                RhinoApp.WriteLine("  Phase 1: deferred redraw, async I/O, lean responses");
-                RhinoApp.WriteLine("  Phase 2: scene snapshot cache + scene_version etag");
-                RhinoApp.WriteLine("  Phase 3: atomic batches + reference resolution ($1.object_ids[0])");
-                RhinoApp.WriteLine("  Phase 5: architect intelligence (massing, floors, core, facade, schedules)");
-                RhinoApp.WriteLine("  Phase 6: consolidated 28-tool MCP surface");
+                RhinoApp.WriteLine("  Display modes, sections, materials, PDF tracing");
+                RhinoApp.WriteLine("  Type AIBridgeStop to stop the server.");
                 RhinoApp.WriteLine("  Logs: %APPDATA%\\AIBridge\\logs\\");
                 RhinoApp.WriteLine("==================================================");
                 AIBridgeLogger.Log(LogLevel.INFO, "Server", $"Started on 127.0.0.1:{PORT} build:{BuildHash}");
             }
             catch (Exception e)
             {
-                RhinoApp.WriteLine($"AIBridge: Failed â€” {e.Message}");
-                AIBridgeLogger.Log(LogLevel.ERROR, "Server", "Start failed", error: e.Message);
+                Diag($"Start FAILED: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
+                RhinoApp.WriteLine($"AIBridge: Failed -- {e.Message}");
+                try { AIBridgeLogger.Log(LogLevel.ERROR, "Server", "Start failed", error: e.Message); } catch { }
                 Stop();
             }
         }
@@ -181,7 +211,7 @@ namespace RhinoAIBridge
 
                         try
                         {
-                            // Fast path â€” ping is in-band, no UI thread hop.
+                            // Fast path â€" ping is in-band, no UI thread hop.
                             if (cmdType == "ping")
                             {
                                 result = HandlePing(cmd["params"] as JObject);
@@ -233,12 +263,12 @@ namespace RhinoAIBridge
                             AIBridgeLogger.LogCommand(cmdType, "{}", timer, "error", e.ToString());
                         }
 
-                        // â”€â”€ Serialize + optional gzip compression â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-                        // Protocol (server â†’ client): [1-byte flag][4-byte big-endian length][payload]
+                        // â"€â"€ Serialize + optional gzip compression â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+                        // Protocol (server â†' client): [1-byte flag][4-byte big-endian length][payload]
                         //   flag 0x00 = raw UTF-8 JSON
                         //   flag 0x01 = gzip-compressed UTF-8 JSON
-                        // Compress when payload > 10 KB â€” typical gains: 5-8Ã— on object lists,
-                        // ~2Ã— on base64 image data. CompressionLevel.Fastest keeps CPU cost low.
+                        // Compress when payload > 10 KB â€" typical gains: 5-8Ã-- on object lists,
+                        // ~2Ã-- on base64 image data. CompressionLevel.Fastest keeps CPU cost low.
                         const int GzipThreshold = 10_000;
                         var raw = Encoding.UTF8.GetBytes(result.ToString(Formatting.None));
                         byte flag;
@@ -283,7 +313,7 @@ namespace RhinoAIBridge
         {
             // No UI thread hop; this MUST stay sub-millisecond.
             // The MCP server uses ping to verify the connection is alive and the doc is what it expects.
-            // scene_version is the etag â€” Claude can short-circuit re-querying if it hasn't changed.
+            // scene_version is the etag â€" Claude can short-circuit re-querying if it hasn't changed.
             var doc = RhinoDoc.ActiveDoc;
             var snap = doc != null ? SceneSnapshotRegistry.Get(doc) : null;
             return new JObject

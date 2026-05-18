@@ -1,0 +1,26 @@
+{
+  "plugin_version": "4.7.0",
+  "protocol_version": "4.7",
+  "min_rhino_version": "8.0",
+  "min_python_version": "3.11",
+  "tested_on": ["Rhino 8.10", "Rhino 8.11", "Rhino 8.12"],
+  "mcp_clients": {
+    "claude_desktop": {
+      "supported": true,
+      "min_version": "0.7",
+      "config_key": "mcpServers"
+    },
+    "claude_code": {
+      "supported": true,
+      "min_version": "1.0",
+      "config_file": ".mcp.json"
+    },
+    "codex": {
+      "supported": true,
+      "min_version": "1.0",
+      "config_file": "codex.mcp.json"
+    }
+  },
+  "breaking_changes": [],
+  "notes": "All v4.5 / v4.6 callers are forward-compatible. No schema changes to existing tools."
+}
